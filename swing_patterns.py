@@ -81,7 +81,10 @@ class PatternDetector:
 
     def detect_all(self, df: pd.DataFrame) -> List[PatternSignal]:
         """Run all pattern detectors and return signals found."""
-        if df.empty or len(df) < 200:
+        # Need enough bars for indicators (200-SMA needs 200, but skip if not enough — most patterns work with 100)
+        min_bars = 100
+        if df.empty or len(df) < min_bars:
+            logger.debug(f"{self.ticker} {self.timeframe}: only {len(df)} bars, need {min_bars}")
             return []
 
         df = self._enrich(df)

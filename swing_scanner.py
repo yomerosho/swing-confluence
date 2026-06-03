@@ -124,37 +124,50 @@ class AlpacaClient:
         """
         Get OHLC bars from Alpaca.
         timeframe: "1Day", "4Hour", "1Hour", etc.
+        Uses 'sip' feed (full consolidated tape) — requires real-time subscription.
+        Falls back to 'iex' if sip access denied.
         """
-        try:
-            end   = datetime.now()
-            start = end - timedelta(days=days)
+        for feed in ["sip", "iex"]:
+            try:
+                end   = datetime.now()
+                start = end - timedelta(days=days)
 
-            url = f"{self.DATA_URL}/v2/stocks/{ticker}/bars"
-            params = {
-                "timeframe":  timeframe,
-                "start":      start.strftime("%Y-%m-%dT00:00:00Z"),
-                "end":        end.strftime("%Y-%m-%dT23:59:59Z"),
-                "limit":      10000,
-                "adjustment": "raw",
-                "feed":       "iex",
-            }
-            r = requests.get(url, headers=self._headers(), params=params, timeout=20)
-            if r.status_code != 200:
-                logger.warning(f"{ticker} bars {r.status_code}: {r.text[:200]}")
-                return pd.DataFrame()
+                url = f"{self.DATA_URL}/v2/stocks/{ticker}/bars"
+                params = {
+                    "timeframe":  timeframe,
+                    "start":      start.strftime("%Y-%m-%dT00:00:00Z"),
+                    "end":        end.strftime("%Y-%m-%dT23:59:59Z"),
+                    "limit":      10000,
+                    "adjustment": "raw",
+                    "feed":       feed,
+                }
+                r = requests.get(url, headers=self._headers(), params=params, timeout=20)
 
-            bars = r.json().get("bars", [])
-            if not bars: return pd.DataFrame()
+                if r.status_code == 403:
+                    # No access to this feed, try next
+                    logger.debug(f"{ticker} {timeframe} feed={feed}: 403, falling back")
+                    continue
+                if r.status_code != 200:
+                    logger.warning(f"{ticker} {timeframe} feed={feed} bars {r.status_code}: {r.text[:200]}")
+                    continue
 
-            df = pd.DataFrame(bars)
-            df["t"] = pd.to_datetime(df["t"])
-            df.set_index("t", inplace=True)
-            df.rename(columns={"o": "Open", "h": "High", "l": "Low",
-                               "c": "Close", "v": "Volume"}, inplace=True)
-            return df[["Open", "High", "Low", "Close", "Volume"]]
-        except Exception as e:
-            logger.error(f"{ticker} bars error: {e}")
-            return pd.DataFrame()
+                bars = r.json().get("bars", [])
+                if not bars:
+                    logger.debug(f"{ticker} {timeframe} feed={feed}: 0 bars returned")
+                    continue
+
+                df = pd.DataFrame(bars)
+                df["t"] = pd.to_datetime(df["t"])
+                df.set_index("t", inplace=True)
+                df.rename(columns={"o": "Open", "h": "High", "l": "Low",
+                                   "c": "Close", "v": "Volume"}, inplace=True)
+                logger.info(f"{ticker} {timeframe} feed={feed}: {len(df)} bars")
+                return df[["Open", "High", "Low", "Close", "Volume"]]
+            except Exception as e:
+                logger.error(f"{ticker} {timeframe} feed={feed} exception: {e}")
+                continue
+
+        return pd.DataFrame()
 
     def get_open_interest(self, ticker: str) -> dict:
         """
@@ -486,7 +499,7 @@ class SwingScanner:
                 return diag
 
             df_daily = self.alpaca.get_bars(ticker, "1Day", days=250)
-            df_4h    = self.alpaca.get_bars(ticker, "4Hour", days=60)
+            df_4h    = self.alpaca.get_bars(ticker, "4Hour", days=180)
 
             if df_daily.empty:
                 diag["error"] = "No daily bars"
@@ -582,7 +595,7 @@ class SwingScanner:
 
             # Get daily + 4H bars
             df_daily = self.alpaca.get_bars(ticker, "1Day", days=250)
-            df_4h    = self.alpaca.get_bars(ticker, "4Hour", days=60)
+            df_4h    = self.alpaca.get_bars(ticker, "4Hour", days=180)
 
             if df_daily.empty:
                 return []
