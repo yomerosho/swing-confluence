@@ -173,9 +173,42 @@ for k, v in {
     "scan_log":       [],
     "diagnostics":    [],
     "last_diagnostic": None,
+    "custom_tickers":      [],   # persisted user-added tickers (chips)
+    "custom_ticker_input": "",   # bound to the Add text box
+    "_last_added":         [],   # for the "Added: X" confirmation
 }.items():
     if k not in st.session_state:
         st.session_state[k] = v
+
+
+# ── Custom-ticker callbacks (add / remove / clear) ──────────────────────────────
+
+def _add_custom_tickers():
+    """Parse the input box, append new valid tickers, then clear the box."""
+    raw = st.session_state.get("custom_ticker_input", "")
+    parsed = [
+        t.strip().upper() for t in raw.replace(",", " ").split()
+        if t.strip().isalpha() and 1 <= len(t.strip()) <= 6
+    ]
+    added = []
+    for t in parsed:
+        if t not in st.session_state.custom_tickers:
+            st.session_state.custom_tickers.append(t)
+            added.append(t)
+    st.session_state._last_added = added
+    st.session_state.custom_ticker_input = ""   # clear the box after adding
+
+def _clear_custom_tickers():
+    st.session_state.custom_tickers = []
+    st.session_state._last_added = []
+    st.session_state.custom_ticker_input = ""
+
+def _remove_custom_ticker(ticker):
+    if ticker in st.session_state.custom_tickers:
+        st.session_state.custom_tickers.remove(ticker)
+    st.session_state._last_added = [
+        t for t in st.session_state.get("_last_added", []) if t != ticker
+    ]
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 
@@ -195,25 +228,42 @@ with st.sidebar:
     if use_mega:    selected += MEGA_CAPS
     if use_swing:   selected += SWING_NAMES
 
-    # Custom tickers
-    custom_raw = st.text_input(
+    # ── Additional tickers (type → Add → removable chips) ────────────────
+    st.text_input(
         "➕ Additional tickers",
-        value="",
+        key="custom_ticker_input",
         placeholder="e.g. QCOM, SMCI, AVGO",
-        help="Comma or space separated. Added on top of selected categories.",
+        help="Comma or space separated. Press Enter or click Add.",
+        on_change=_add_custom_tickers,   # Enter also adds
     )
-    custom_tickers = []
-    if custom_raw.strip():
-        custom_tickers = [
-            t.strip().upper() for t in custom_raw.replace(",", " ").split()
-            if t.strip().isalpha() and 1 <= len(t.strip()) <= 6
-        ]
-        # Dedupe while preserving order
-        custom_tickers = [t for t in custom_tickers if t not in selected]
-        selected += custom_tickers
 
+    ac1, ac2 = st.columns(2)
+    ac1.button("➕ Add", key="add_custom_btn",
+               on_click=_add_custom_tickers, use_container_width=True)
+    ac2.button("🗑️ Clear all", key="clear_custom_btn",
+               on_click=_clear_custom_tickers, use_container_width=True)
+
+    if st.session_state.get("_last_added"):
+        st.success(f"Added: {', '.join(st.session_state['_last_added'])}")
+
+    # Current custom tickers as removable chips (click ✕ to drop one)
+    custom_tickers = list(st.session_state.custom_tickers)
     if custom_tickers:
-        st.caption(f"Will scan {len(selected)} tickers (+{len(custom_tickers)} custom)")
+        st.caption("Current custom tickers:")
+        chip_cols = st.columns(3)
+        for i, t in enumerate(custom_tickers):
+            chip_cols[i % 3].button(
+                f"✕ {t}", key=f"rmtick_{t}",
+                on_click=_remove_custom_ticker, args=(t,),
+                use_container_width=True, help=f"Remove {t}",
+            )
+
+    # Merge into scan list (dedupe against the category selections)
+    extra = [t for t in custom_tickers if t not in selected]
+    selected += extra
+
+    if extra:
+        st.caption(f"Will scan {len(selected)} tickers (+{len(extra)} custom)")
     else:
         st.caption(f"Will scan {len(selected)} tickers")
 
