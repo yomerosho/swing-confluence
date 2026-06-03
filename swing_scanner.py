@@ -278,13 +278,25 @@ class AlpacaClient:
                     parsed = self._parse_option_symbol(symbol)
                     if not parsed: continue
 
-                    q  = snap.get("latestQuote") or {}
-                    t  = snap.get("latestTrade") or {}
-                    g  = snap.get("greeks") or {}
-                    iv = snap.get("impliedVolatility") or 0
+                    q       = snap.get("latestQuote") or {}
+                    t       = snap.get("latestTrade") or {}
+                    g       = snap.get("greeks") or {}
+                    iv      = snap.get("impliedVolatility") or 0
+                    daily   = snap.get("dailyBar") or {}
+                    prev    = snap.get("prevDailyBar") or {}
+                    minute  = snap.get("minuteBar") or {}
 
                     bid, ask = q.get("bp", 0) or 0, q.get("ap", 0) or 0
                     mid = (bid + ask) / 2 if bid and ask else 0
+
+                    # Volume: prefer today's daily bar, fall back to prev day, then latest trade size
+                    day_vol  = daily.get("v", 0) or 0
+                    prev_vol = prev.get("v", 0) or 0
+                    last_sz  = t.get("s", 0) or 0
+                    volume   = day_vol if day_vol > 0 else (prev_vol if prev_vol > 0 else last_sz)
+
+                    # For VWAP-style premium estimate, use daily bar's vw (volume-weighted average) if present
+                    vwap = daily.get("vw", 0) or mid
 
                     all_rows.append({
                         "symbol":      symbol,
@@ -293,7 +305,10 @@ class AlpacaClient:
                         "expiry":      parsed["expiration"],
                         "bid":         bid, "ask": ask, "mid": mid,
                         "last":        t.get("p") or 0,
-                        "volume":      t.get("s") or 0,
+                        "volume":      volume,
+                        "vwap":        vwap,
+                        "day_volume":  day_vol,
+                        "prev_volume": prev_vol,
                         "gamma":       g.get("gamma", 0),
                         "delta":       g.get("delta", 0),
                         "iv":          iv,
@@ -450,42 +465,66 @@ class WhaleAnalyzer:
         df = chain.copy()
         df["volume"] = df["volume"].fillna(0)
         df["mid"]    = df["mid"].fillna(0)
-        df["premium"] = df["mid"] * df["volume"] * 100
+        df["vwap"]   = df.get("vwap", df["mid"]).fillna(df["mid"])
+
+        # Premium per strike: prefer VWAP × volume (more accurate for daily total)
+        # Falls back to mid × volume when vwap unavailable
+        price_for_prem = df["vwap"].where(df["vwap"] > 0, df["mid"])
+        df["premium"] = price_for_prem * df["volume"] * 100
 
         # Filter to strikes within 10% of spot
         df = df[abs(df["strike"] - spot) / spot <= 0.10]
 
-        # Direction-aligned whales
+        # Direction-aligned strikes
         target_type = "call" if direction == "CALL" else "put"
-        whales = df[
-            (df["option_type"] == target_type) &
-            (df["premium"] >= threshold) &
-            (df["volume"] > 0)
-        ]
+        directional = df[(df["option_type"] == target_type) & (df["volume"] > 0)].copy()
 
-        if whales.empty:
+        if directional.empty:
             return {
                 "supports": False,
-                "summary":  f"No ${threshold/1000:.0f}K+ {direction.lower()} flow detected",
+                "summary":  f"No {direction.lower()} flow detected near spot",
                 "count":    0,
                 "premium":  0,
             }
 
-        total_prem = float(whales["premium"].sum())
-        top_whale  = whales.nlargest(1, "premium").iloc[0]
+        # Tier 1: Individual strikes with $500K+ premium (true whale block)
+        big_strikes = directional[directional["premium"] >= threshold]
 
-        summary = (
-            f"{len(whales)} whale trade(s), "
-            f"top: {target_type.upper()} ${top_whale['strike']:.0f} "
-            f"{top_whale['expiry']} · ${top_whale['premium']:,.0f}"
-        )
+        # Tier 2: AGGREGATE directional pressure — total premium in direction near ATM
+        # If a stock has $2M+ total CALL premium near spot, that's institutional
+        # interest even if no single strike crossed $500K
+        agg_threshold = threshold * 2  # $1M aggregate for the soft tier
+        total_directional_prem = float(directional["premium"].sum())
 
-        return {
-            "supports": True,
-            "summary":  summary,
-            "count":    len(whales),
-            "premium":  total_prem,
-        }
+        if not big_strikes.empty:
+            top = big_strikes.nlargest(1, "premium").iloc[0]
+            return {
+                "supports": True,
+                "summary":  (f"🐋 BLOCK: ${top['premium']:,.0f} on "
+                             f"{target_type.upper()} ${top['strike']:.0f} "
+                             f"{top['expiry']} ({len(big_strikes)} block strike(s))"),
+                "count":    len(big_strikes),
+                "premium":  float(big_strikes["premium"].sum()),
+            }
+        elif total_directional_prem >= agg_threshold:
+            top = directional.nlargest(1, "premium").iloc[0]
+            return {
+                "supports": True,
+                "summary":  (f"💪 PRESSURE: ${total_directional_prem:,.0f} aggregate "
+                             f"{direction.lower()} flow near spot · "
+                             f"largest strike: ${top['strike']:.0f} ${top['premium']:,.0f}"),
+                "count":    int((directional["premium"] > 0).sum()),
+                "premium":  total_directional_prem,
+            }
+        else:
+            top_prem = float(directional["premium"].max()) if not directional.empty else 0
+            return {
+                "supports": False,
+                "summary":  (f"No whale signal · top strike ${top_prem:,.0f} "
+                             f"(need $500K block or $1M aggregate)"),
+                "count":    0,
+                "premium":  total_directional_prem,
+            }
 
 
 # ── SwingConfluence Scanner (Main Engine) ─────────────────────────────────────
