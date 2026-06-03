@@ -40,7 +40,7 @@ key    = "YOUR_ALPACA_KEY"
 secret = "YOUR_ALPACA_SECRET"
 
 [gmail]
-user     = "yshobowa@gmail.com"
+user     = "my email address"
 password = "YOUR_GMAIL_APP_PASSWORD"
 ```
 
