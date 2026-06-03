@@ -50,6 +50,7 @@ WHALE_THRESHOLD       = 500_000
 WHALE_OVERRIDE        = 5_000_000   # $5M+ in directional whale flow → bypass GEX
 MIN_OI_THRESHOLD      = 500       # minimum OI for a tradeable strike
 PREFERRED_OI_THRESHOLD = 1000     # preferred OI for full-confidence pick
+MIN_RISK_REWARD       = 1.0       # reject setups with R/R below 1:1
 
 
 # ── Confluence Setup Output ───────────────────────────────────────────────────
@@ -774,6 +775,14 @@ class SwingScanner:
 
         # Trade plan
         plan = self._build_trade_plan(spot, direction, patterns, gex_result, chain)
+
+        # Filter: reject setups with insufficient risk/reward
+        if plan["risk_reward"] < MIN_RISK_REWARD:
+            logger.info(
+                f"{ticker} {direction} rejected: R/R {plan['risk_reward']} < {MIN_RISK_REWARD} "
+                f"(entry ${plan['entry_above']}, stop ${plan['stop_below']}, target ${plan['target']})"
+            )
+            return None
 
         return ConfluenceSetup(
             ticker=ticker, direction=direction, conviction=conviction, spot=spot,

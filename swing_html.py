@@ -82,8 +82,15 @@ def render_setup_card(s: ConfluenceSetup) -> str:
         </div>
         """
 
-    # R/R color
-    rr_color = PALETTE["green"] if s.risk_reward >= 1.5 else (PALETTE["gold"] if s.risk_reward >= 1.0 else PALETTE["red"])
+    # R/R color + descriptive label
+    if s.risk_reward >= 2.0:
+        rr_color, rr_label = PALETTE["green"], "✅ STRONG"
+    elif s.risk_reward >= 1.5:
+        rr_color, rr_label = PALETTE["green"], "✅ GOOD"
+    elif s.risk_reward >= 1.0:
+        rr_color, rr_label = PALETTE["gold"], "🟡 OK"
+    else:
+        rr_color, rr_label = PALETTE["red"], "⚠️ POOR"
 
     return _minify(f"""
     <div style='background:{PALETTE["card"]};border:1px solid {PALETTE["border"]};
@@ -157,6 +164,7 @@ def render_setup_card(s: ConfluenceSetup) -> str:
           <div>
             <div style='font-size:0.68rem;color:{PALETTE["text_muted"]};font-family:monospace;'>R/R</div>
             <div style='font-size:0.95rem;color:{rr_color};font-weight:700;font-family:monospace;'>1:{s.risk_reward:.1f}</div>
+            <div style='font-size:0.62rem;color:{rr_color};font-family:monospace;margin-top:2px;'>{rr_label}</div>
           </div>
         </div>
 
