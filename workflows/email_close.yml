@@ -1,0 +1,75 @@
+name: Swing — After-Close Scan (4 PM CT)
+
+# Target: 16:00 America/Chicago (5 PM ET market close)
+#   CDT (UTC-5): 21:00 UTC
+#   CST (UTC-6): 22:00 UTC
+# Guard window: 15:45–16:45 Chicago
+
+on:
+  schedule:
+    - cron: '0 21 * * 1-5'   # CDT
+    - cron: '0 22 * * 1-5'   # CST
+  workflow_dispatch:
+    inputs:
+      force_send:
+        description: 'Force send'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
+
+jobs:
+  send-close:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate secrets
+        run: |
+          MISSING=""
+          [ -z "${{ secrets.ALPACA_KEY }}" ]         && MISSING="$MISSING ALPACA_KEY"
+          [ -z "${{ secrets.ALPACA_SECRET }}" ]      && MISSING="$MISSING ALPACA_SECRET"
+          [ -z "${{ secrets.GMAIL_USER }}" ]         && MISSING="$MISSING GMAIL_USER"
+          [ -z "${{ secrets.GMAIL_APP_PASSWORD }}" ] && MISSING="$MISSING GMAIL_APP_PASSWORD"
+          if [ -n "$MISSING" ]; then
+            echo "❌ Missing secrets:$MISSING"; exit 1
+          fi
+          echo "✅ All secrets configured"
+
+      - name: DST guard (15:45–16:45 Chicago)
+        id: dst_check
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.force_send }}" = "true" ]; then
+            echo "should_run=true" >> $GITHUB_OUTPUT; exit 0
+          fi
+          HOUR=$(TZ='America/Chicago' date +%H)
+          MIN=$(TZ='America/Chicago' date +%M)
+          NOW_MIN=$((10#$HOUR * 60 + 10#$MIN))
+          START=$((15*60 + 45))
+          END=$((16*60 + 45))
+          NOW_STR=$(TZ='America/Chicago' date +'%H:%M %Z %A')
+          echo "🕐 Chicago: $NOW_STR"
+          if [ "$NOW_MIN" -ge "$START" ] && [ "$NOW_MIN" -le "$END" ]; then
+            echo "✅ In window"; echo "should_run=true" >> $GITHUB_OUTPUT
+          else
+            echo "⏭️  Outside window"; echo "should_run=false" >> $GITHUB_OUTPUT
+          fi
+
+      - uses: actions/setup-python@v5
+        if: steps.dst_check.outputs.should_run == 'true'
+        with: { python-version: '3.11', cache: pip }
+
+      - name: Install deps
+        if: steps.dst_check.outputs.should_run == 'true'
+        run: pip install -r requirements.txt
+
+      - name: Run close scan & email
+        if: steps.dst_check.outputs.should_run == 'true'
+        env:
+          ALPACA_KEY:         ${{ secrets.ALPACA_KEY }}
+          ALPACA_SECRET:      ${{ secrets.ALPACA_SECRET }}
+          GMAIL_USER:         ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+        run: python run_scheduled_email.py --slot close --skip-if-empty
