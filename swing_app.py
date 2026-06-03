@@ -417,8 +417,10 @@ with tab_diagnostic:
             st.error("⚠️ Alpaca keys missing")
         else:
             import requests as _rq
+            import json as _json
+
             st.markdown("### 🩺 Alpaca Data Quality Check")
-            st.caption("Verifying which feeds work and whether prices are sane.")
+            st.caption("Verifying which feeds work and inspecting the RAW options snapshot response.")
 
             headers = {
                 "APCA-API-KEY-ID":     ALPACA_KEY,
@@ -426,13 +428,13 @@ with tab_diagnostic:
                 "accept":              "application/json",
             }
 
-            test_tickers = ["SPY", "AAPL", "NVDA"]
+            # 1. Stock quote test
+            test_tickers = ["SPY", "AAPL"]
             results_rows = []
 
-            with st.spinner("Probing Alpaca endpoints..."):
+            with st.spinner("Probing stock quote endpoints..."):
                 for ticker in test_tickers:
                     for feed in ["sip", "iex"]:
-                        # Quote test
                         try:
                             r = _rq.get(
                                 f"https://data.alpaca.markets/v2/stocks/{ticker}/quotes/latest",
@@ -447,36 +449,107 @@ with tab_diagnostic:
                                 mid_val = f"${(bid + ask) / 2:.2f}" if (bid and ask) else "—"
                                 results_rows.append({
                                     "Ticker": ticker, "Feed": feed.upper(),
-                                    "Endpoint": "quote", "Status": status,
+                                    "Status": status,
                                     "Bid": f"${bid:.2f}" if bid else "—",
                                     "Ask": f"${ask:.2f}" if ask else "—",
                                     "Mid": mid_val,
                                 })
-                            elif status == 403:
-                                results_rows.append({
-                                    "Ticker": ticker, "Feed": feed.upper(),
-                                    "Endpoint": "quote", "Status": "❌ 403 no access",
-                                    "Bid": "—", "Ask": "—", "Mid": "—",
-                                })
                             else:
                                 results_rows.append({
                                     "Ticker": ticker, "Feed": feed.upper(),
-                                    "Endpoint": "quote", "Status": f"❌ {status}",
+                                    "Status": f"❌ {status}",
                                     "Bid": "—", "Ask": "—", "Mid": "—",
                                 })
                         except Exception as e:
                             results_rows.append({
                                 "Ticker": ticker, "Feed": feed.upper(),
-                                "Endpoint": "quote", "Status": f"❌ {type(e).__name__}",
+                                "Status": f"❌ {type(e).__name__}",
                                 "Bid": "—", "Ask": "—", "Mid": "—",
                             })
 
+            st.markdown("#### Stock Quote Check")
             st.dataframe(pd.DataFrame(results_rows), use_container_width=True, hide_index=True)
-            st.caption(
-                "**What to look for:** SPY around $570-580, AAPL around $200-280, NVDA around $130-200. "
-                "If SIP rows show ❌ 403, your account doesn't have real-time SIP access — we'll need to handle that. "
-                "If prices look wildly wrong (10x or 0.1x of expected), there's a parsing bug."
-            )
+
+            # 2. RAW OPTIONS SNAPSHOT INSPECTION — show fields actually populated
+            st.markdown("#### Raw Options Snapshot — find which volume field has data")
+            with st.spinner("Fetching SPY options snapshot..."):
+                try:
+                    from datetime import date as _date, timedelta as _td
+                    today = _date.today()
+                    end   = today + _td(days=7)
+
+                    r = _rq.get(
+                        "https://data.alpaca.markets/v1beta1/options/snapshots/SPY",
+                        headers=headers,
+                        params={
+                            "limit": 5,
+                            "feed": "indicative",
+                            "expiration_date_gte": today.isoformat(),
+                            "expiration_date_lte": end.isoformat(),
+                        },
+                        timeout=15,
+                    )
+
+                    if r.status_code == 200:
+                        data = r.json()
+                        snapshots = data.get("snapshots", {})
+                        if snapshots:
+                            # Show the first snapshot's full structure
+                            first_symbol = list(snapshots.keys())[0]
+                            first_snap   = snapshots[first_symbol]
+
+                            st.markdown(f"**First contract: `{first_symbol}`**")
+                            st.markdown("Inspect the fields below — we need to find which one actually has VOLUME:")
+
+                            # Show all top-level keys
+                            st.code(_json.dumps(list(first_snap.keys()), indent=2), language="json")
+
+                            st.markdown("**Full snapshot JSON for this contract:**")
+                            st.code(_json.dumps(first_snap, indent=2, default=str), language="json")
+
+                            # Try to extract volume from all common locations
+                            vol_check = {
+                                "latestTrade.s":           first_snap.get("latestTrade", {}).get("s"),
+                                "latestQuote.bs":          first_snap.get("latestQuote", {}).get("bs"),
+                                "latestQuote.as":          first_snap.get("latestQuote", {}).get("as"),
+                                "dailyBar.v":              first_snap.get("dailyBar", {}).get("v"),
+                                "dailyBar.n":              first_snap.get("dailyBar", {}).get("n"),
+                                "prevDailyBar.v":          first_snap.get("prevDailyBar", {}).get("v"),
+                                "minuteBar.v":             first_snap.get("minuteBar", {}).get("v"),
+                            }
+                            st.markdown("**Volume candidates from this contract:**")
+                            st.dataframe(
+                                pd.DataFrame([
+                                    {"Field": k, "Value": v if v is not None else "❌ MISSING"}
+                                    for k, v in vol_check.items()
+                                ]),
+                                use_container_width=True, hide_index=True
+                            )
+
+                            # Aggregate across all 5 sample contracts
+                            st.markdown("**Volume populated across 5 sample contracts:**")
+                            agg = {k: 0 for k in vol_check.keys()}
+                            for sym, snap in snapshots.items():
+                                for k in agg:
+                                    parts = k.split(".")
+                                    val = snap.get(parts[0], {}).get(parts[1])
+                                    if val is not None and val != 0:
+                                        agg[k] += 1
+                            st.dataframe(
+                                pd.DataFrame([
+                                    {"Field": k, "Contracts with non-zero data": f"{v}/{len(snapshots)}"}
+                                    for k, v in agg.items()
+                                ]),
+                                use_container_width=True, hide_index=True
+                            )
+
+                        else:
+                            st.error(f"No snapshots returned. Full response: {data}")
+                    else:
+                        st.error(f"Status {r.status_code}: {r.text[:500]}")
+
+                except Exception as e:
+                    st.error(f"Probe failed: {e}")
 
     if diag_btn:
         if not ALPACA_KEY or not ALPACA_SECRET:
