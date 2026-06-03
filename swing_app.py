@@ -168,9 +168,11 @@ hr {{ border-color: #1a2030 !important; }}
 # ── Session state ─────────────────────────────────────────────────────────────
 
 for k, v in {
-    "setups":    [],
-    "last_scan": None,
-    "scan_log":  [],
+    "setups":         [],
+    "last_scan":      None,
+    "scan_log":       [],
+    "diagnostics":    [],
+    "last_diagnostic": None,
 }.items():
     if k not in st.session_state:
         st.session_state[k] = v
@@ -321,60 +323,297 @@ if email_btn:
         else:  st.error(f"❌ {msg}")
 
 
-# ── Display setups ────────────────────────────────────────────────────────────
+# ── Tabs ──────────────────────────────────────────────────────────────────────
 
-if not st.session_state.setups and st.session_state.last_scan is None:
+tab_scanner, tab_diagnostic = st.tabs([
+    "🎯 Confluence Scanner",
+    "🔬 Diagnostic Scan",
+])
+
+
+# ════════════════════════════════════════════════
+#  TAB 1 — CONFLUENCE SCANNER (main feature)
+# ════════════════════════════════════════════════
+with tab_scanner:
+    if not st.session_state.setups and st.session_state.last_scan is None:
+        st.markdown(f"""
+        <div style='text-align:center;padding:80px 0;'>
+          <div style='font-size:4rem;'>🎯</div>
+          <h2 style='font-family:Syne,sans-serif;color:#5a3a80;margin-top:16px;'>3-of-3 Swing Confluence Scanner</h2>
+          <p style='font-family:JetBrains Mono,monospace;color:#3a2a50;font-size:0.9rem;'>
+            Click <b style='color:{PALETTE["brand"]};'>Run Confluence Scan</b> in the sidebar
+          </p>
+          <p style='font-family:JetBrains Mono,monospace;color:#3a2a50;font-size:0.78rem;margin-top:24px;line-height:1.8;'>
+            Scans Daily + 4H timeframes<br>
+            Returns ONLY setups where ALL 3 factors align<br>
+            Patterns · GEX positioning · Whale flow ≥ $500K
+          </p>
+          <p style='font-family:JetBrains Mono,monospace;color:#5a3a80;font-size:0.72rem;margin-top:30px;'>
+            Not finding anything? Try the <b style='color:{PALETTE["brand"]};'>🔬 Diagnostic Scan</b> tab
+          </p>
+        </div>""", unsafe_allow_html=True)
+
+    elif not st.session_state.setups:
+        st.markdown(f"""
+        <div style='background:{PALETTE["card"]};border:1px solid {PALETTE["border"]};
+                    border-radius:12px;padding:40px;text-align:center;margin:20px 0;'>
+          <div style='font-size:3rem;'>🔍</div>
+          <h3 style='color:{PALETTE["text"]};font-family:monospace;margin-top:12px;'>No confluence setups today</h3>
+          <p style='color:{PALETTE["text_dim"]};font-family:monospace;font-size:0.85rem;'>
+            All tickers scanned. None meet the 3-of-3 threshold.
+          </p>
+          <p style='color:{PALETTE["text_muted"]};font-family:monospace;font-size:0.78rem;margin-top:14px;'>
+            Run the <b>🔬 Diagnostic Scan</b> tab to see which gate is filtering setups out.
+          </p>
+        </div>""", unsafe_allow_html=True)
+
+    else:
+        setups       = st.session_state.setups
+        max_count    = sum(1 for s in setups if s.conviction == 6)
+        high_count   = sum(1 for s in setups if s.conviction == 5)
+        medium_count = sum(1 for s in setups if s.conviction == 4)
+        call_count   = sum(1 for s in setups if s.direction == "CALL")
+        put_count    = sum(1 for s in setups if s.direction == "PUT")
+
+        c1, c2, c3, c4, c5, c6 = st.columns(6)
+        c1.metric("Total",   len(setups))
+        c2.metric("MAX 6★",  max_count)
+        c3.metric("HIGH 5★", high_count)
+        c4.metric("MED 4★",  medium_count)
+        c5.metric("Calls",   call_count)
+        c6.metric("Puts",    put_count)
+
+        st.markdown("---")
+
+        for setup in setups:
+            html = render_setup_card(setup)
+            st.markdown(html, unsafe_allow_html=True)
+
+
+# ════════════════════════════════════════════════
+#  TAB 2 — DIAGNOSTIC SCAN
+# ════════════════════════════════════════════════
+with tab_diagnostic:
     st.markdown(f"""
-    <div style='text-align:center;padding:80px 0;'>
-      <div style='font-size:4rem;'>🎯</div>
-      <h2 style='font-family:Syne,sans-serif;color:#5a3a80;margin-top:16px;'>3-of-3 Swing Confluence Scanner</h2>
-      <p style='font-family:JetBrains Mono,monospace;color:#3a2a50;font-size:0.9rem;'>
-        Click <b style='color:{PALETTE["brand"]};'>Run Confluence Scan</b> in the sidebar
-      </p>
-      <p style='font-family:JetBrains Mono,monospace;color:#3a2a50;font-size:0.78rem;margin-top:24px;line-height:1.8;'>
-        Scans Daily + 4H timeframes across 36 tickers<br>
-        Returns ONLY setups where ALL 3 factors align<br>
-        Patterns · GEX positioning · Whale flow ≥ $500K
-      </p>
-    </div>""", unsafe_allow_html=True)
+    <div style='background:{PALETTE["card_dark"]};border:1px solid {PALETTE["border"]};
+                border-left:3px solid {PALETTE["brand"]};border-radius:10px;
+                padding:16px 20px;margin-bottom:20px;'>
+      <div style='color:{PALETTE["brand"]};font-family:monospace;font-size:0.85rem;font-weight:700;margin-bottom:6px;'>
+        🔬 Diagnostic Scanner
+      </div>
+      <div style='color:{PALETTE["text_dim"]};font-family:monospace;font-size:0.78rem;line-height:1.6;'>
+        Shows where each ticker is being filtered out. Useful when the main scanner returns nothing.<br>
+        For each ticker: <b>Patterns → GEX → Whales</b>. The "Blocked At" column tells you which gate fails.
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
 
-elif not st.session_state.setups:
-    st.markdown(f"""
-    <div style='background:{PALETTE["card"]};border:1px solid {PALETTE["border"]};
-                border-radius:12px;padding:40px;text-align:center;margin:20px 0;'>
-      <div style='font-size:3rem;'>🔍</div>
-      <h3 style='color:{PALETTE["text"]};font-family:monospace;margin-top:12px;'>No confluence setups today</h3>
-      <p style='color:{PALETTE["text_dim"]};font-family:monospace;font-size:0.85rem;'>
-        All tickers scanned. None meet the 3-of-3 threshold.
-      </p>
-      <p style='color:{PALETTE["text_muted"]};font-family:monospace;font-size:0.78rem;margin-top:14px;'>
-        Patience is part of the edge. Check again on the next scheduled slot.
-      </p>
-    </div>""", unsafe_allow_html=True)
+    diag_btn = st.button("🔬 Run Diagnostic Scan", type="primary", key="diag_btn_main")
 
-else:
-    # Summary
-    setups       = st.session_state.setups
-    max_count    = sum(1 for s in setups if s.conviction == 6)
-    high_count   = sum(1 for s in setups if s.conviction == 5)
-    medium_count = sum(1 for s in setups if s.conviction == 4)
-    call_count   = sum(1 for s in setups if s.direction == "CALL")
-    put_count    = sum(1 for s in setups if s.direction == "PUT")
+    if diag_btn:
+        if not ALPACA_KEY or not ALPACA_SECRET:
+            st.error("⚠️ Configure Alpaca keys in Streamlit secrets first")
+        else:
+            scanner = SwingScanner(ALPACA_KEY, ALPACA_SECRET)
+            with st.status("🔬 Running diagnostic scan...", expanded=True) as status:
+                pb  = st.progress(0)
+                stx = st.empty()
 
-    c1, c2, c3, c4, c5, c6 = st.columns(6)
-    c1.metric("Total",   len(setups))
-    c2.metric("MAX 6★",  max_count)
-    c3.metric("HIGH 5★", high_count)
-    c4.metric("MED 4★",  medium_count)
-    c5.metric("Calls",   call_count)
-    c6.metric("Puts",    put_count)
+                def diag_cb(pct, msg):
+                    pb.progress(pct)
+                    stx.markdown(f"`{msg}`")
 
-    st.markdown("---")
+                diags = scanner.diagnose_all(tickers=selected, progress_cb=diag_cb)
+                pb.empty(); stx.empty()
 
-    # Render each setup
-    for setup in setups:
-        html = render_setup_card(setup)
-        st.markdown(html, unsafe_allow_html=True)
+                st.session_state.diagnostics    = diags
+                st.session_state.last_diagnostic = datetime.now().strftime("%H:%M:%S CT")
+                status.update(label=f"✅ Diagnosed {len(diags)} tickers", state="complete")
+
+    # Display diagnostic results
+    if st.session_state.diagnostics:
+        diags = st.session_state.diagnostics
+
+        # ── Aggregate stats ─────────────────────────────────────────────
+        no_data       = sum(1 for d in diags if d.get("error") or not d.get("spot"))
+        no_patterns   = sum(1 for d in diags if not d.get("daily_patterns") and not d.get("h4_patterns") and not d.get("error"))
+        had_patterns  = len(diags) - no_data - no_patterns
+
+        # Count where setups blocked
+        blocked_gex     = 0
+        blocked_whales  = 0
+        passed_all      = 0
+        no_chain        = 0
+        for d in diags:
+            for r in d.get("results", []):
+                if r["blocked_at"] == "gex":      blocked_gex    += 1
+                elif r["blocked_at"] == "whales": blocked_whales += 1
+                elif r["blocked_at"] == "passed": passed_all     += 1
+                elif r["blocked_at"] == "no_chain": no_chain     += 1
+
+        st.markdown("### 📊 Gate Analysis Summary")
+
+        c1, c2, c3, c4, c5, c6 = st.columns(6)
+        c1.metric("Tickers", len(diags))
+        c2.metric("Had Patterns", had_patterns)
+        c3.metric("No Patterns", no_patterns)
+        c4.metric("Blocked: GEX", blocked_gex)
+        c5.metric("Blocked: Whales", blocked_whales)
+        c6.metric("✅ Passed", passed_all)
+
+        # Insight
+        total_attempts = blocked_gex + blocked_whales + passed_all + no_chain
+        if total_attempts > 0:
+            primary_blocker = max(
+                [("GEX", blocked_gex), ("Whales", blocked_whales),
+                 ("Chain unavailable", no_chain), ("All passed", passed_all)],
+                key=lambda x: x[1]
+            )
+            pct_blocked = primary_blocker[1] / total_attempts * 100
+
+            color = PALETTE["red"] if primary_blocker[0] != "All passed" else PALETTE["green"]
+            st.markdown(f"""
+            <div style='background:{PALETTE["card"]};border-left:3px solid {color};
+                        border-radius:8px;padding:14px 18px;margin:16px 0;'>
+              <div style='color:{color};font-family:monospace;font-size:0.95rem;font-weight:700;'>
+                🔍 Primary blocker: {primary_blocker[0]} ({primary_blocker[1]}/{total_attempts} = {pct_blocked:.0f}%)
+              </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        st.markdown("---")
+
+        # ── Per-ticker breakdown ────────────────────────────────────────
+        st.markdown("### 🎯 Per-Ticker Breakdown")
+
+        filter_opt = st.radio(
+            "Show:",
+            ["All tickers", "Only blocked at whales", "Only blocked at GEX", "Only with patterns", "Only passed all"],
+            horizontal=True,
+        )
+
+        rows = []
+        for d in diags:
+            ticker = d["ticker"]
+            spot   = d.get("spot", 0) or 0
+
+            if d.get("error"):
+                rows.append({
+                    "Ticker": ticker, "Spot": "—",
+                    "Daily Patterns": "—", "4H Patterns": "—",
+                    "Direction": "—", "GEX": "—", "Whales": "—",
+                    "Blocked At": f"❌ {d['error']}",
+                    "Whale $": "—",
+                })
+                continue
+
+            daily_count = len(d.get("daily_patterns", []))
+            h4_count    = len(d.get("h4_patterns",    []))
+
+            if not d.get("results"):
+                # No patterns at all
+                rows.append({
+                    "Ticker": ticker, "Spot": f"${spot:.2f}",
+                    "Daily Patterns": daily_count, "4H Patterns": h4_count,
+                    "Direction": "—", "GEX": "—", "Whales": "—",
+                    "Blocked At": "🚫 No patterns",
+                    "Whale $": "—",
+                })
+                continue
+
+            for r in d["results"]:
+                rows.append({
+                    "Ticker": ticker, "Spot": f"${spot:.2f}",
+                    "Daily Patterns": daily_count, "4H Patterns": h4_count,
+                    "Direction": r["direction"],
+                    "GEX":    "✅" if r["gex_supports"] else "❌",
+                    "Whales": "✅" if r["whale_supports"] else "❌",
+                    "Blocked At": {
+                        "patterns":  "🚫 No patterns",
+                        "gex":       "❌ GEX",
+                        "whales":    "❌ Whales",
+                        "no_chain":  "⚠️ No chain",
+                        "passed":    "✅ PASSED",
+                    }.get(r["blocked_at"], r["blocked_at"]),
+                    "Whale $": f"${r['whale_top_premium']:,.0f}" if r['whale_top_premium'] else "—",
+                })
+
+        df_diag = pd.DataFrame(rows)
+
+        # Apply filter
+        if filter_opt == "Only blocked at whales":
+            df_diag = df_diag[df_diag["Blocked At"].str.contains("Whales", na=False)]
+        elif filter_opt == "Only blocked at GEX":
+            df_diag = df_diag[df_diag["Blocked At"].str.contains("GEX", na=False)]
+        elif filter_opt == "Only with patterns":
+            df_diag = df_diag[(df_diag["Daily Patterns"] != "—") &
+                              ((df_diag["Daily Patterns"] > 0) | (df_diag["4H Patterns"] > 0))]
+        elif filter_opt == "Only passed all":
+            df_diag = df_diag[df_diag["Blocked At"].str.contains("PASSED", na=False)]
+
+        st.dataframe(df_diag, use_container_width=True, hide_index=True)
+
+        # ── Detailed pattern + summary breakdown ─────────────────────────
+        st.markdown("---")
+        st.markdown("### 📋 Detailed Pattern Detections")
+        st.caption("Expand each ticker to see exactly what patterns fired and why GEX/whales blocked it.")
+
+        tickers_with_patterns = [d for d in diags
+                                  if d.get("daily_patterns") or d.get("h4_patterns")]
+
+        if not tickers_with_patterns:
+            st.info("No patterns detected on any ticker. This means Gate 1 (pattern detection) is the bottleneck.")
+        else:
+            for d in tickers_with_patterns:
+                ticker = d["ticker"]
+                spot   = d.get("spot", 0)
+
+                summary_emoji = "✅" if any(r["blocked_at"] == "passed" for r in d.get("results", [])) else "❌"
+
+                with st.expander(f"{summary_emoji} {ticker} · ${spot:.2f} · {len(d.get('daily_patterns', []))}d + {len(d.get('h4_patterns', []))}h4 patterns"):
+                    # Patterns
+                    if d.get("daily_patterns"):
+                        st.markdown("**Daily patterns:**")
+                        for p in d["daily_patterns"]:
+                            color = PALETTE["green"] if p.direction == "CALL" else PALETTE["red"]
+                            st.markdown(f"<div style='font-family:monospace;font-size:0.78rem;color:#d4dce8;padding:2px 0;'>"
+                                        f"<b style='color:{color};'>{p.direction}</b> · "
+                                        f"{p.pattern} · {p.reason}</div>",
+                                        unsafe_allow_html=True)
+
+                    if d.get("h4_patterns"):
+                        st.markdown("**4H patterns:**")
+                        for p in d["h4_patterns"]:
+                            color = PALETTE["green"] if p.direction == "CALL" else PALETTE["red"]
+                            st.markdown(f"<div style='font-family:monospace;font-size:0.78rem;color:#d4dce8;padding:2px 0;'>"
+                                        f"<b style='color:{color};'>{p.direction}</b> · "
+                                        f"{p.pattern} · {p.reason}</div>",
+                                        unsafe_allow_html=True)
+
+                    # Gate results per direction
+                    if d.get("results"):
+                        st.markdown("**Gate analysis:**")
+                        for r in d["results"]:
+                            dir_color = PALETTE["green"] if r["direction"] == "CALL" else PALETTE["red"]
+                            st.markdown(f"""
+                            <div style='background:#1a1f2e;border-radius:6px;padding:10px 14px;margin:6px 0;
+                                        font-family:monospace;font-size:0.78rem;'>
+                              <b style='color:{dir_color};'>{r["direction"]}</b> direction:<br>
+                              • GEX: {"✅" if r["gex_supports"] else "❌"} {r["gex_summary"]}<br>
+                              • Whales: {"✅" if r["whale_supports"] else "❌"} {r["whale_summary"]}<br>
+                              <b style='color:#bc8cff;'>→ {r["blocked_at"]}</b>
+                            </div>
+                            """, unsafe_allow_html=True)
+
+    elif st.session_state.last_diagnostic is None:
+        st.markdown(f"""
+        <div style='text-align:center;padding:60px 0;'>
+          <div style='font-size:3rem;'>🔬</div>
+          <h3 style='color:{PALETTE["text"]};font-family:monospace;margin-top:12px;'>Diagnostic Mode</h3>
+          <p style='color:{PALETTE["text_dim"]};font-family:monospace;font-size:0.85rem;'>
+            Click <b style='color:{PALETTE["brand"]};'>Run Diagnostic Scan</b> to see where setups are getting filtered
+          </p>
+        </div>""", unsafe_allow_html=True)
 
 # ── Subscriber Management ─────────────────────────────────────────────────────
 

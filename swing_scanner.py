@@ -443,6 +443,134 @@ class SwingScanner:
         self.gex    = GEXAnalyzer()
         self.whale  = WhaleAnalyzer()
 
+    def diagnose_ticker(self, ticker: str) -> dict:
+        """
+        Diagnostic scan — returns gate-by-gate results without 3-of-3 filter.
+        Used to identify which gate is blocking setups.
+
+        Returns: {
+          "ticker":            str,
+          "spot":              float | None,
+          "daily_patterns":    List[PatternSignal],  # raw detections
+          "h4_patterns":       List[PatternSignal],
+          "directions_tried":  List[str],            # ["CALL", "PUT"] or subset
+          "results":           List[dict]            # per direction: gate results
+        }
+
+        Each result has:
+          "direction":        "CALL" or "PUT"
+          "pattern_count":    int
+          "gex_supports":     bool
+          "gex_summary":      str
+          "whale_supports":   bool
+          "whale_summary":    str
+          "whale_count":      int
+          "whale_top_premium": float
+          "blocked_at":       "patterns" | "gex" | "whales" | "passed"
+        """
+        diag = {
+            "ticker":           ticker,
+            "spot":             None,
+            "daily_patterns":   [],
+            "h4_patterns":      [],
+            "directions_tried": [],
+            "results":          [],
+            "error":            None,
+        }
+
+        try:
+            spot = self.alpaca.get_spot(ticker)
+            diag["spot"] = spot
+            if spot == 0:
+                diag["error"] = "No spot price"
+                return diag
+
+            df_daily = self.alpaca.get_bars(ticker, "1Day", days=250)
+            df_4h    = self.alpaca.get_bars(ticker, "4Hour", days=60)
+
+            if df_daily.empty:
+                diag["error"] = "No daily bars"
+                return diag
+
+            diag["daily_patterns"] = PatternDetector(ticker, "1D").detect_all(df_daily)
+            diag["h4_patterns"]    = PatternDetector(ticker, "4H").detect_all(df_4h) if not df_4h.empty else []
+
+            all_patterns = diag["daily_patterns"] + diag["h4_patterns"]
+            calls = [p for p in all_patterns if p.direction == "CALL"]
+            puts  = [p for p in all_patterns if p.direction == "PUT"]
+
+            # Fetch chain once for both directions
+            chain = self.alpaca.get_options_chain(ticker, days_out=14)
+
+            for direction, patterns in [("CALL", calls), ("PUT", puts)]:
+                if not patterns:
+                    continue
+
+                diag["directions_tried"].append(direction)
+                result = {
+                    "direction":         direction,
+                    "pattern_count":     len(patterns),
+                    "patterns":          patterns,
+                    "gex_supports":      False,
+                    "gex_summary":       "",
+                    "whale_supports":    False,
+                    "whale_summary":     "",
+                    "whale_count":       0,
+                    "whale_top_premium": 0,
+                    "blocked_at":        "patterns",
+                }
+
+                if chain.empty:
+                    result["blocked_at"] = "no_chain"
+                    diag["results"].append(result)
+                    continue
+
+                # Gate 2: GEX
+                gex_result = self.gex.analyze(chain, spot, direction)
+                result["gex_supports"] = gex_result["supports"]
+                result["gex_summary"]  = gex_result["summary"]
+
+                # Gate 3: Whales — compute regardless of GEX for diagnostic purposes
+                whale_result = self.whale.analyze(chain, spot, direction)
+                result["whale_supports"]    = whale_result["supports"]
+                result["whale_summary"]     = whale_result["summary"]
+                result["whale_count"]       = whale_result["count"]
+                result["whale_top_premium"] = whale_result["premium"]
+
+                # Determine where it blocked
+                if not gex_result["supports"]:
+                    result["blocked_at"] = "gex"
+                elif not whale_result["supports"]:
+                    result["blocked_at"] = "whales"
+                else:
+                    result["blocked_at"] = "passed"
+
+                diag["results"].append(result)
+
+        except Exception as e:
+            diag["error"] = f"{type(e).__name__}: {e}"
+            logger.error(f"{ticker} diagnose: {diag['error']}")
+
+        return diag
+
+    def diagnose_all(self, tickers: List[str] = None,
+                     progress_cb=None) -> List[dict]:
+        """Run diagnostic scan on all tickers, return raw gate results."""
+        if tickers is None:
+            tickers = ALL_TICKERS
+
+        results = []
+        total   = len(tickers)
+
+        for i, ticker in enumerate(tickers):
+            if progress_cb:
+                progress_cb(i / total, f"Diagnosing {ticker} ({i+1}/{total})...")
+
+            diag = self.diagnose_ticker(ticker)
+            results.append(diag)
+
+        return results
+
     def scan_ticker(self, ticker: str) -> List[ConfluenceSetup]:
         """Scan one ticker for confluence setups. Returns 0+ setups."""
         try:
