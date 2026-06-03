@@ -77,6 +77,7 @@ RISK_MIN_ATR          = 0.60      # floor the risk leg (kills fake-tight 1:7 R/R
 RISK_MAX_ATR          = 2.50      # cap the risk leg (swing stop, not a position trade)
 TARGET_MIN_ATR        = 1.00      # a target must be ≥1·ATR away or step to the next level
 ATR_TARGET_MULT       = 1.50      # projected target when no level is far enough out
+MAX_LEVEL_DIST_PCT    = 0.25      # drop patterns whose level is >25% from spot (bad data)
 
 
 # ── Confluence Setup Output ───────────────────────────────────────────────────
@@ -203,35 +204,58 @@ class AlpacaClient:
                 start = end - timedelta(days=days)
 
                 url = f"{self.DATA_URL}/v2/stocks/{ticker}/bars"
-                params = {
+                base_params = {
                     "timeframe":  timeframe,
                     "start":      start.strftime("%Y-%m-%dT00:00:00Z"),
                     "end":        end.strftime("%Y-%m-%dT23:59:59Z"),
                     "limit":      10000,
                     "adjustment": "raw",
                     "feed":       feed,
+                    "sort":       "asc",   # oldest→newest so iloc[-1] is the latest bar
                 }
-                r = requests.get(url, headers=self._headers(), params=params, timeout=20)
 
-                if r.status_code == 403:
-                    # No access to this feed, try next
-                    logger.debug(f"{ticker} {timeframe} feed={feed}: 403, falling back")
-                    continue
-                if r.status_code != 200:
-                    logger.warning(f"{ticker} {timeframe} feed={feed} bars {r.status_code}: {r.text[:200]}")
-                    continue
+                # Paginate: Alpaca returns a next_page_token when results span
+                # multiple pages. Dropping it (the old bug) left us with only the
+                # OLDEST page, so iloc[-1] was a stale bar hundreds of points from
+                # spot — which is what produced the bogus 4H levels.
+                all_bars, page_token, feed_ok = [], None, True
+                for _ in range(25):  # hard cap on pages
+                    params = dict(base_params)
+                    if page_token:
+                        params["page_token"] = page_token
+                    r = requests.get(url, headers=self._headers(), params=params, timeout=20)
 
-                bars = r.json().get("bars", [])
-                if not bars:
+                    if r.status_code == 403:
+                        logger.debug(f"{ticker} {timeframe} feed={feed}: 403, falling back")
+                        feed_ok = False
+                        break
+                    if r.status_code != 200:
+                        logger.warning(f"{ticker} {timeframe} feed={feed} bars {r.status_code}: {r.text[:200]}")
+                        feed_ok = False
+                        break
+
+                    payload = r.json()
+                    all_bars.extend(payload.get("bars", []) or [])
+                    page_token = payload.get("next_page_token")
+                    if not page_token:
+                        break
+
+                if not feed_ok:
+                    continue
+                if not all_bars:
                     logger.debug(f"{ticker} {timeframe} feed={feed}: 0 bars returned")
                     continue
 
-                df = pd.DataFrame(bars)
+                df = pd.DataFrame(all_bars)
                 df["t"] = pd.to_datetime(df["t"])
                 df.set_index("t", inplace=True)
                 df.rename(columns={"o": "Open", "h": "High", "l": "Low",
                                    "c": "Close", "v": "Volume"}, inplace=True)
-                logger.info(f"{ticker} {timeframe} feed={feed}: {len(df)} bars")
+                # Guarantee chronological order + de-dupe page seams so iloc[-1]
+                # is unambiguously the most recent bar.
+                df = df[~df.index.duplicated(keep="last")].sort_index()
+                logger.info(f"{ticker} {timeframe} feed={feed}: {len(df)} bars "
+                            f"(last {df.index[-1].date()})")
                 return df[["Open", "High", "Low", "Close", "Volume"]]
             except Exception as e:
                 logger.error(f"{ticker} {timeframe} feed={feed} exception: {e}")
@@ -722,6 +746,26 @@ class SwingScanner:
             if df_daily.empty:
                 return []
 
+            # Freshness guard — never run pattern detection on a stale tail. If a
+            # feed/pagination gap leaves the most recent bar days old, its levels
+            # land hundreds of points from spot (the bogus 4H "$615" levels). Drop
+            # the daily set entirely if stale; quietly ignore a stale 4H set.
+            now_naive = pd.Timestamp.now("UTC").tz_convert(None)
+            def _age_days(d) -> float:
+                if d is None or d.empty:
+                    return 1e9
+                ts = pd.to_datetime(d.index[-1])
+                if ts.tzinfo is not None:
+                    ts = ts.tz_convert(None)
+                return (now_naive - ts).days
+
+            if _age_days(df_daily) > 5:
+                logger.warning(f"{ticker}: daily bars stale (last {df_daily.index[-1]}), skipping")
+                return []
+            if _age_days(df_4h) > 5:
+                logger.warning(f"{ticker}: 4H bars stale (last {df_4h.index[-1] if not df_4h.empty else 'n/a'}), ignoring 4H")
+                df_4h = pd.DataFrame()
+
             # Daily ATR — drives volatility-aware stops/targets in the trade plan
             try:
                 atr_series = Indicators.atr(
@@ -738,6 +782,14 @@ class SwingScanner:
             h4_patterns    = PatternDetector(ticker, "4H").detect_all(df_4h) if not df_4h.empty else []
 
             all_patterns = daily_patterns + h4_patterns
+
+            # Level-sanity — a real swing pattern's key level sits near price. Drop
+            # anything whose level is absurdly far from live spot (stale-bar/bad-data
+            # artifacts), e.g. a "9-EMA bounce" at $615 when spot is $924.
+            all_patterns = [
+                p for p in all_patterns
+                if p.level and p.level > 0 and abs(p.level - spot) / spot <= MAX_LEVEL_DIST_PCT
+            ]
             if not all_patterns:
                 return []
 
