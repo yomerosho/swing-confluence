@@ -52,6 +52,12 @@ MIN_OI_THRESHOLD      = 500       # minimum OI for a tradeable strike
 PREFERRED_OI_THRESHOLD = 1000     # preferred OI for full-confidence pick
 MIN_RISK_REWARD       = 1.0       # reject setups with R/R below 1:1
 
+# Entry anchoring (retracement/retest model) — entry is placed at the pattern's
+# structural level, NOT at a flat offset from spot.
+ENTRY_BUF             = 0.001     # fill a touch before the exact level (0.1%)
+STOP_BEYOND_LEVEL     = 0.0075    # stop = 0.75% past the level (invalidation)
+MAX_RETRACE_PCT       = 0.05      # if level is >5% from spot, re-anchor (won't fill in 1-3d)
+
 
 # ── Confluence Setup Output ───────────────────────────────────────────────────
 
@@ -861,18 +867,43 @@ class SwingScanner:
                 expiry    = str(pick.iloc[0]["expiry"])
                 picked_oi = int(pick.iloc[0]["open_interest"])
 
-        # Entry/stop/target from technical levels
+        # ── Entry/stop/target — anchored to STRUCTURE, not spot ──────────────
+        # Previously entry = spot ± 0.5%, which ignored every level and could
+        # drop a short right onto a support shelf. We now anchor the entry to the
+        # pattern's level (retracement/retest) with the stop just BEYOND it:
+        #   PUT  → short the move UP into the rejection level; stop above it
+        #   CALL → buy the move DOWN into the held level; stop below it
+        # This is what produces a tight, structurally-justified risk leg.
         primary_pattern = patterns[0]
-        level           = primary_pattern.level
+        level           = float(primary_pattern.level)
+
+        def _too_far(lv) -> bool:
+            return (not lv) or lv <= 0 or abs(lv - spot) / spot > MAX_RETRACE_PCT
 
         if direction == "CALL":
-            entry_above = float(spot + 0.005 * spot)
-            stop_below  = float(min(level * 0.995, spot * 0.985))
-            target      = float(gex_result["magnet"]) if gex_result["magnet"] and gex_result["magnet"] > spot else float(spot * 1.03)
-        else:
-            entry_above = float(spot - 0.005 * spot)
-            stop_below  = float(max(level * 1.005, spot * 1.015))
-            target      = float(gex_result["magnet"]) if gex_result["magnet"] and gex_result["magnet"] < spot else float(spot * 0.97)
+            # If the pattern level is too far to fill in 1-3d, re-anchor to the
+            # nearest GEX support, then to a spot-relative anchor as last resort.
+            anchor = level
+            if _too_far(anchor):
+                gsup   = gex_result.get("support")
+                anchor = gsup if not _too_far(gsup) else spot * 0.995
+            entry_above = float(anchor * (1 + ENTRY_BUF))           # limit just above the level
+            stop_below  = float(anchor * (1 - STOP_BEYOND_LEVEL))   # invalidation below the level
+            mag         = gex_result.get("magnet")
+            target      = float(mag) if (mag and mag > spot) else float(spot * 1.03)
+            if target <= entry_above:                               # keep target above entry
+                target = float(entry_above * 1.03)
+        else:  # PUT
+            anchor = level
+            if _too_far(anchor):
+                gres   = gex_result.get("resistance")
+                anchor = gres if not _too_far(gres) else spot * 1.005
+            entry_above = float(anchor * (1 - ENTRY_BUF))           # limit just below the level
+            stop_below  = float(anchor * (1 + STOP_BEYOND_LEVEL))   # invalidation above the level
+            mag         = gex_result.get("magnet")
+            target      = float(mag) if (mag and mag < spot) else float(spot * 0.97)
+            if target >= entry_above:                               # keep target below entry
+                target = float(entry_above * 0.97)
 
         # Risk/reward
         risk   = abs(entry_above - stop_below)
