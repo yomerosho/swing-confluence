@@ -258,6 +258,11 @@ def build_swing_report(setups: List[ConfluenceSetup],
         SwingConfluence · Alpaca real-time data · 3-of-3 confluence required<br>
         Educational use only · Not financial advice
       </div>
+      <div style='color:{PALETTE["text_muted"]};font-family:monospace;font-size:0.65rem;
+                  line-height:1.6;margin-top:12px;padding-top:12px;border-top:1px solid {PALETTE["border"]};'>
+        You're receiving this because you're on the SwingConfluence subscriber list.<br>
+        To unsubscribe, reply to this email with "UNSUBSCRIBE" as the subject.
+      </div>
     </div>
     """
 

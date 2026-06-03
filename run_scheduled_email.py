@@ -21,6 +21,7 @@ import logging
 
 from swing_scanner import SwingScanner, ALL_TICKERS
 from swing_html import build_swing_report
+from subscribers import load_subscribers as load_subs
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -34,18 +35,8 @@ SLOT_LABELS = {
 
 
 def load_subscribers(path="subscribers.txt"):
-    subs = []
-    if not os.path.exists(path):
-        logger.warning(f"{path} not found")
-        return subs
-    with open(path) as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith("#"): continue
-            parts = line.split(",")
-            email = next((p.strip() for p in parts if "@" in p), None)
-            if email: subs.append(email)
-    return subs
+    """Wrapper that returns just email addresses for backward compat."""
+    return [s["email"] for s in load_subs(path)]
 
 
 def send_email(html: str, subject: str, recipients: list,

@@ -258,19 +258,7 @@ st.markdown(f"""
 
 # ── Scan ──────────────────────────────────────────────────────────────────────
 
-def load_subscribers():
-    subs = []
-    try:
-        with open("subscribers.txt") as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#"): continue
-                parts = line.split(",")
-                email = next((p.strip() for p in parts if "@" in p), None)
-                if email: subs.append(email)
-    except FileNotFoundError:
-        pass
-    return subs
+from subscribers import get_emails as load_subscribers
 
 
 def send_email(html, subject):
@@ -387,6 +375,79 @@ else:
     for setup in setups:
         html = render_setup_card(setup)
         st.markdown(html, unsafe_allow_html=True)
+
+# ── Subscriber Management ─────────────────────────────────────────────────────
+
+st.markdown("---")
+
+with st.expander("📧 Manage Email Subscribers", expanded=False):
+    from subscribers import (
+        load_subscribers as _load_subs,
+        add_subscriber as _add_sub,
+        remove_subscriber as _rm_sub,
+        is_valid_email,
+    )
+
+    current_subs = _load_subs()
+
+    st.markdown(f"**Current subscribers: {len(current_subs)}**")
+    st.caption("Emails are sent automatically at 8 AM / 1 PM / 4 PM CT when 3-of-3 setups are found.")
+
+    if current_subs:
+        for sub in current_subs:
+            cols = st.columns([5, 1])
+            with cols[0]:
+                if sub["name"] != sub["email"].split("@")[0]:
+                    st.markdown(
+                        f"<div style='font-family:monospace;color:#d4dce8;padding:4px 0;'>"
+                        f"<b style='color:#bc8cff'>{sub['name']}</b> · "
+                        f"<span style='color:#a8b3c8'>{sub['email']}</span></div>",
+                        unsafe_allow_html=True
+                    )
+                else:
+                    st.markdown(
+                        f"<div style='font-family:monospace;color:#d4dce8;padding:4px 0;'>"
+                        f"{sub['email']}</div>",
+                        unsafe_allow_html=True
+                    )
+            with cols[1]:
+                if st.button("🗑️", key=f"rm_{sub['email']}", help="Remove"):
+                    ok, msg = _rm_sub(sub["email"])
+                    if ok:
+                        st.success(msg)
+                        st.rerun()
+                    else:
+                        st.error(msg)
+    else:
+        st.info("No subscribers yet. Add one below.")
+
+    st.markdown("##### ➕ Add Subscriber")
+    add_cols = st.columns([2, 3, 1])
+    with add_cols[0]:
+        new_name = st.text_input("Name (optional)", key="new_sub_name",
+                                   placeholder="John", label_visibility="collapsed")
+    with add_cols[1]:
+        new_email = st.text_input("Email", key="new_sub_email",
+                                    placeholder="john@example.com",
+                                    label_visibility="collapsed")
+    with add_cols[2]:
+        if st.button("Add", key="add_sub_btn"):
+            if not new_email:
+                st.error("Email required")
+            elif not is_valid_email(new_email):
+                st.error("Invalid email format")
+            else:
+                ok, msg = _add_sub(new_email, new_name)
+                if ok:
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.warning(msg)
+
+    st.caption(
+        "⚠️ Changes are written to subscribers.txt on the deployed instance. "
+        "For permanent persistence, edit subscribers.txt in GitHub and push."
+    )
 
 # Footer
 st.markdown("---")
