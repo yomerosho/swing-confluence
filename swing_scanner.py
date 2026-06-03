@@ -31,28 +31,38 @@ MEGA_CAPS    = ["AAPL", "MSFT", "NVDA", "META", "GOOGL", "AMZN", "TSLA"]
 INDICES_ETFS = ["SPY", "QQQ", "IWM"]
 
 MEGA_CAPS    = ["AAPL", "MSFT", "NVDA", "META", "GOOGL", "AMZN", "TSLA"]
+INDICES_ETFS = ["SPY", "QQQ", "IWM", "SMH", "IBIT"]
 
-SWING_NAMES = [
+MEGA_CAPS    = ["AAPL", "MSFT", "NVDA", "META", "GOOGL", "AMZN", "TSLA"]
+
+# Focused daily list — top single-name options liquidity
+CORE_20 = [
+    "MSTR", "AMD", "PLTR", "COIN", "AVGO",
+    "NFLX", "MU", "INTC", "BAC", "UBER",
+    "CRWD", "MRVL", "CVNA", "HOOD", "SOFI",
+    "QCOM", "DIS", "C", "ABNB", "AMAT",
+]
+
+# Bench — liquid, but watch only when there's a setup/catalyst
+BENCH = [
     # Semis & Hardware
-    "AMD", "ARM", "AVGO", "INTC", "LRCX", "MU", "TSM",
-    "QCOM", "AMAT",                                      # ← added
+    "ARM", "LRCX", "TSM", "KLAC", "ON",
     # Software & Cloud
-    "ADBE", "CRM", "ORCL", "SHOP", "SNOW", "ZS",
-    "CRWD", "PANW",                                      # ← added (cyber, deep OI)
+    "ADBE", "CRM", "ORCL", "SHOP", "SNOW", "ZS", "PANW",
     # Financials
-    "COIN", "GS", "HOOD", "JPM", "PYPL", "SOFI", "V",
-    "BAC",                                               # ← added (penny-wide spreads)
+    "GS", "JPM", "PYPL", "V", "MS", "WFC", "SCHW",
     # Healthcare
     "ISRG", "UNH",
     # Energy & Industrials
     "CAT", "CVX", "DE", "FSLR", "GE", "OXY", "XOM",
     # Consumer & Internet
-    "BABA", "JD", "NFLX", "PINS", "RBLX", "RDDT", "UBER", "WMT",
-    "DIS",                                               # ← added
+    "BABA", "JD", "PINS", "RBLX", "RDDT", "WMT", "DKNG", "SBUX", "NKE", "GM",
     # Speculative / High-Beta
-    "HIMS", "LMND", "OKLO", "PLTR", "RKLB",
-    "MSTR",                                              # ← added (one of the deepest single-name options markets)
+    "HIMS", "LMND", "OKLO", "RKLB", "AFRM",
 ]
+
+SWING_NAMES = CORE_20 + BENCH   # full universe = 60 names
+
 ALL_TICKERS = INDICES_ETFS + MEGA_CAPS + SWING_NAMES
 
 WHALE_THRESHOLD       = 500_000
