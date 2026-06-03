@@ -48,7 +48,7 @@ st.markdown(f"""
 html, body, .stApp, [class*="css"], .main, .block-container {{
   font-family: 'Syne', sans-serif !important;
   background: {PALETTE['bg']} !important;
-  color: {PALETTE['text']} !important;
+  color: #ffffff !important;
 }}
 
 /* Main content area */
@@ -57,25 +57,52 @@ html, body, .stApp, [class*="css"], .main, .block-container {{
 [data-testid="stHeader"] {{ background: {PALETTE['bg']} !important; }}
 [data-testid="stToolbar"] {{ background: transparent !important; }}
 
+/* TOP-RIGHT TOOLBAR BUTTONS (Share, edit, github, ⋮) — force light icons */
+[data-testid="stToolbar"] button,
+[data-testid="stToolbar"] a,
+[data-testid="stToolbar"] svg {{
+  color: #e0e8f0 !important;
+  fill: #e0e8f0 !important;
+  opacity: 1 !important;
+}}
+[data-testid="stToolbar"] button:hover,
+[data-testid="stToolbar"] a:hover {{
+  background: rgba(255,255,255,0.08) !important;
+  color: #ffffff !important;
+}}
+header [data-testid="baseButton-headerNoPadding"] svg {{ color: #e0e8f0 !important; }}
+
 /* Sidebar */
 section[data-testid="stSidebar"] {{ background: #090c14 !important; border-right: 1px solid #1a2030; }}
-section[data-testid="stSidebar"] * {{ color: #e0e8f0 !important; }}
-section[data-testid="stSidebar"] .stCheckbox label {{ color: #e0e8f0 !important; }}
+section[data-testid="stSidebar"] * {{ color: #ffffff !important; }}
+section[data-testid="stSidebar"] .stCheckbox label,
+section[data-testid="stSidebar"] p,
+section[data-testid="stSidebar"] span {{ color: #e0e8f0 !important; }}
 
 /* Status messages */
 .stStatus, [data-testid="stStatusWidget"] {{
   background: {PALETTE['card']} !important;
-  color: {PALETTE['text']} !important;
+  color: #ffffff !important;
   border: 1px solid {PALETTE['border']} !important;
 }}
-.stStatus * {{ color: {PALETTE['text']} !important; }}
-.stAlert {{ background: {PALETTE['card']} !important; color: {PALETTE['text']} !important; }}
+.stStatus *, [data-testid="stStatusWidget"] * {{ color: #ffffff !important; }}
+.stAlert {{ background: {PALETTE['card']} !important; color: #ffffff !important; }}
+.stAlert * {{ color: #ffffff !important; }}
 
-/* Headings & text */
-h1, h2, h3, h4, h5, h6 {{ color: {PALETTE['text']} !important; }}
-p, span, label, div {{ color: {PALETTE['text_dim']}; }}
+/* Progress bar messages */
+.stMarkdown code, code {{
+  background: {PALETTE['card_dark']} !important;
+  color: #4af0c4 !important;
+  padding: 4px 10px !important;
+  border-radius: 6px !important;
+  font-family: 'JetBrains Mono', monospace !important;
+}}
 
-/* Metric widgets — for the summary boxes (Total/MAX/HIGH/etc.) */
+/* Headings & text — high contrast */
+h1, h2, h3, h4, h5, h6 {{ color: #ffffff !important; }}
+p, span, label, div {{ color: #d4dce8; }}
+
+/* Metric widgets */
 [data-testid="metric-container"] {{
   background: {PALETTE['card']} !important;
   border: 1px solid {PALETTE['border']} !important;
@@ -83,7 +110,7 @@ p, span, label, div {{ color: {PALETTE['text_dim']}; }}
   padding: 14px 18px;
 }}
 [data-testid="metric-container"] label {{
-  color: {PALETTE['text_muted']} !important;
+  color: #a8b3c8 !important;
   font-family: 'JetBrains Mono', monospace !important;
   font-size: 0.7rem !important;
   text-transform: uppercase;
@@ -95,14 +122,22 @@ p, span, label, div {{ color: {PALETTE['text_dim']}; }}
   font-weight: 700 !important;
 }}
 
-/* Text inputs (for the custom tickers field) */
+/* Text inputs — fix placeholder visibility */
 .stTextInput input, .stTextArea textarea {{
   background: {PALETTE['card_dark']} !important;
-  color: {PALETTE['text']} !important;
+  color: #ffffff !important;
   border: 1px solid {PALETTE['border']} !important;
   font-family: 'JetBrains Mono', monospace !important;
 }}
-.stTextInput label, .stTextArea label {{ color: {PALETTE['text_dim']} !important; }}
+.stTextInput input::placeholder,
+.stTextArea textarea::placeholder {{
+  color: #8090a0 !important;
+  opacity: 1 !important;
+}}
+.stTextInput label, .stTextArea label {{ color: #d4dce8 !important; font-weight: 600; }}
+
+/* Help tooltips (?) icon */
+[data-testid="stTooltipIcon"] svg {{ color: #6a7a90 !important; fill: #6a7a90 !important; }}
 
 /* Buttons */
 .stButton > button {{
@@ -112,14 +147,21 @@ p, span, label, div {{ color: {PALETTE['text_dim']}; }}
   border-radius: 6px;
   padding: 10px 20px;
   font-family: 'JetBrains Mono', monospace;
+  font-weight: 600;
 }}
-.stButton > button:hover {{ background: linear-gradient(135deg, #4a2a80, #2a0f60) !important; }}
+.stButton > button:hover {{
+  background: linear-gradient(135deg, #4a2a80, #2a0f60) !important;
+  color: #ffffff !important;
+}}
 
 /* Captions */
-.stCaption, small {{ color: {PALETTE['text_muted']} !important; }}
+.stCaption, small {{ color: #8a99b0 !important; }}
 
 /* Horizontal divider */
 hr {{ border-color: #1a2030 !important; }}
+
+/* Checkbox color when checked */
+.stCheckbox input:checked + div {{ background: {PALETTE['brand']} !important; }}
 </style>
 """, unsafe_allow_html=True)
 
