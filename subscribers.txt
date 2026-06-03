@@ -1,0 +1,4 @@
+# SwingConfluence Email Subscribers
+# Format: email or Name,email — one per line. Lines starting with # are comments.
+
+yshobowa@gmail.com
