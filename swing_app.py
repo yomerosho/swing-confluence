@@ -162,6 +162,34 @@ hr {{ border-color: #1a2030 !important; }}
 
 /* Checkbox color when checked */
 .stCheckbox input:checked + div {{ background: {PALETTE['brand']} !important; }}
+
+/* Custom-ticker chips — solid dark bg + bright text so symbols are readable.
+   Scoped to the keyed rmtick_ wrappers so other buttons keep their look. */
+[class*="st-key-rmtick_"] button {{
+  background: {PALETTE['card']} !important;
+  border: 1px solid {PALETTE['brand']} !important;
+  border-radius: 999px !important;
+  padding: 4px 12px !important;
+  min-height: 0 !important;
+  white-space: nowrap !important;
+  font-family: 'JetBrains Mono', monospace !important;
+  font-size: 0.8rem !important;
+  font-weight: 700 !important;
+}}
+[class*="st-key-rmtick_"] button p,
+[class*="st-key-rmtick_"] button div,
+[class*="st-key-rmtick_"] button span {{
+  color: {PALETTE['text']} !important;
+}}
+[class*="st-key-rmtick_"] button:hover {{
+  background: #3a1f28 !important;
+  border-color: {PALETTE['red']} !important;
+}}
+[class*="st-key-rmtick_"] button:hover p,
+[class*="st-key-rmtick_"] button:hover div,
+[class*="st-key-rmtick_"] button:hover span {{
+  color: {PALETTE['red']} !important;
+}}
 </style>
 """, unsafe_allow_html=True)
 
