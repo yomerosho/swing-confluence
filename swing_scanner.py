@@ -107,17 +107,59 @@ class AlpacaClient:
             "accept":              "application/json",
         }
 
-    def get_spot(self, ticker: str) -> float:
-        try:
-            url = f"{self.DATA_URL}/v2/stocks/{ticker}/quotes/latest"
-            r = requests.get(url, headers=self._headers(), timeout=10)
-            if r.status_code == 200:
+    def get_spot(self, ticker: str, verbose: bool = False) -> float:
+        """
+        Get latest spot price. Tries SIP first (full tape), falls back to IEX.
+        Returns 0 if both fail.
+        """
+        for feed in ["sip", "iex"]:
+            try:
+                url = f"{self.DATA_URL}/v2/stocks/{ticker}/quotes/latest"
+                params = {"feed": feed}
+                r = requests.get(url, headers=self._headers(), params=params, timeout=10)
+
+                if r.status_code == 403:
+                    if verbose: logger.info(f"{ticker} spot feed={feed}: 403 no access")
+                    continue
+                if r.status_code != 200:
+                    if verbose: logger.warning(f"{ticker} spot feed={feed}: {r.status_code} {r.text[:200]}")
+                    continue
+
                 q = r.json().get("quote", {})
-                bid, ask = q.get("bp", 0), q.get("ap", 0)
-                if bid > 0 and ask > 0: return (bid + ask) / 2
-                return ask or bid
-        except Exception as e:
-            logger.debug(f"{ticker} spot error: {e}")
+                bid, ask = q.get("bp", 0) or 0, q.get("ap", 0) or 0
+
+                # Sanity check — reject if both are 0 or if spread is absurd (>30%)
+                if bid == 0 and ask == 0:
+                    if verbose: logger.warning(f"{ticker} spot feed={feed}: both bid/ask are 0")
+                    continue
+
+                mid = (bid + ask) / 2 if (bid > 0 and ask > 0) else (ask or bid)
+
+                if bid > 0 and ask > 0:
+                    spread_pct = (ask - bid) / mid * 100
+                    if spread_pct > 30:
+                        if verbose: logger.warning(f"{ticker} spot feed={feed}: spread {spread_pct:.1f}% too wide, skipping")
+                        continue
+
+                if verbose: logger.info(f"{ticker} spot feed={feed}: ${mid:.2f} (bid={bid}, ask={ask})")
+                return mid
+
+            except Exception as e:
+                if verbose: logger.error(f"{ticker} spot feed={feed} exception: {e}")
+
+        # Last resort: try latest trade
+        for feed in ["sip", "iex"]:
+            try:
+                url = f"{self.DATA_URL}/v2/stocks/{ticker}/trades/latest"
+                params = {"feed": feed}
+                r = requests.get(url, headers=self._headers(), params=params, timeout=10)
+                if r.status_code == 200:
+                    p = r.json().get("trade", {}).get("p", 0)
+                    if p and p > 0:
+                        if verbose: logger.info(f"{ticker} spot trade fallback feed={feed}: ${p:.2f}")
+                        return p
+            except: pass
+
         return 0
 
     def get_bars(self, ticker: str, timeframe: str = "1Day", days: int = 250) -> pd.DataFrame:

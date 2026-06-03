@@ -410,6 +410,74 @@ with tab_diagnostic:
 
     diag_btn = st.button("🔬 Run Diagnostic Scan", type="primary", key="diag_btn_main")
 
+    health_btn = st.button("🩺 Quick Alpaca Health Check", key="health_btn")
+
+    if health_btn:
+        if not ALPACA_KEY or not ALPACA_SECRET:
+            st.error("⚠️ Alpaca keys missing")
+        else:
+            import requests as _rq
+            st.markdown("### 🩺 Alpaca Data Quality Check")
+            st.caption("Verifying which feeds work and whether prices are sane.")
+
+            headers = {
+                "APCA-API-KEY-ID":     ALPACA_KEY,
+                "APCA-API-SECRET-KEY": ALPACA_SECRET,
+                "accept":              "application/json",
+            }
+
+            test_tickers = ["SPY", "AAPL", "NVDA"]
+            results_rows = []
+
+            with st.spinner("Probing Alpaca endpoints..."):
+                for ticker in test_tickers:
+                    for feed in ["sip", "iex"]:
+                        # Quote test
+                        try:
+                            r = _rq.get(
+                                f"https://data.alpaca.markets/v2/stocks/{ticker}/quotes/latest",
+                                headers=headers,
+                                params={"feed": feed},
+                                timeout=10,
+                            )
+                            status = r.status_code
+                            if status == 200:
+                                q = r.json().get("quote", {})
+                                bid, ask = q.get("bp", 0), q.get("ap", 0)
+                                mid_val = f"${(bid + ask) / 2:.2f}" if (bid and ask) else "—"
+                                results_rows.append({
+                                    "Ticker": ticker, "Feed": feed.upper(),
+                                    "Endpoint": "quote", "Status": status,
+                                    "Bid": f"${bid:.2f}" if bid else "—",
+                                    "Ask": f"${ask:.2f}" if ask else "—",
+                                    "Mid": mid_val,
+                                })
+                            elif status == 403:
+                                results_rows.append({
+                                    "Ticker": ticker, "Feed": feed.upper(),
+                                    "Endpoint": "quote", "Status": "❌ 403 no access",
+                                    "Bid": "—", "Ask": "—", "Mid": "—",
+                                })
+                            else:
+                                results_rows.append({
+                                    "Ticker": ticker, "Feed": feed.upper(),
+                                    "Endpoint": "quote", "Status": f"❌ {status}",
+                                    "Bid": "—", "Ask": "—", "Mid": "—",
+                                })
+                        except Exception as e:
+                            results_rows.append({
+                                "Ticker": ticker, "Feed": feed.upper(),
+                                "Endpoint": "quote", "Status": f"❌ {type(e).__name__}",
+                                "Bid": "—", "Ask": "—", "Mid": "—",
+                            })
+
+            st.dataframe(pd.DataFrame(results_rows), use_container_width=True, hide_index=True)
+            st.caption(
+                "**What to look for:** SPY around $570-580, AAPL around $200-280, NVDA around $130-200. "
+                "If SIP rows show ❌ 403, your account doesn't have real-time SIP access — we'll need to handle that. "
+                "If prices look wildly wrong (10x or 0.1x of expected), there's a parsing bug."
+            )
+
     if diag_btn:
         if not ALPACA_KEY or not ALPACA_SECRET:
             st.error("⚠️ Configure Alpaca keys in Streamlit secrets first")
