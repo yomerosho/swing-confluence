@@ -24,14 +24,9 @@ from swing_patterns import PatternDetector, PatternSignal
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
-# ── Tickers (36 confirmed) ────────────────────────────────────────────────────
+# ── Tickers  ────────────────────────────────────────────────────
 
-INDICES_ETFS = ["SPY", "QQQ", "IWM", "DIA", "XLF", "EEM"]
-MEGA_CAPS    = ["AAPL", "MSFT", "NVDA", "META", "GOOGL", "AMZN", "TSLA"]
 INDICES_ETFS = ["SPY", "QQQ", "IWM"]
-
-MEGA_CAPS    = ["AAPL", "MSFT", "NVDA", "META", "GOOGL", "AMZN", "TSLA"]
-INDICES_ETFS = ["SPY", "QQQ", "IWM", "SMH", "IBIT"]
 
 MEGA_CAPS    = ["AAPL", "MSFT", "NVDA", "META", "GOOGL", "AMZN", "TSLA"]
 
