@@ -1,6 +1,6 @@
 name: Swing — After-Close Scan (4 PM CT)
 
-# Target: 16:00 America/Chicago (after market close)
+# Target: 16:00 America/Chicago (5 PM ET market close)
 #   CDT (UTC-5): 21:00 UTC
 #   CST (UTC-6): 22:00 UTC
 # Guard window: 15:45–16:45 Chicago
@@ -72,4 +72,4 @@ jobs:
           ALPACA_SECRET:      ${{ secrets.ALPACA_SECRET }}
           GMAIL_USER:         ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
-        run: python run_scheduled_email.py --slot close --skip-if-empty
+        run: python run_scheduled_email.py --slot close --skip-if-empty --min-conviction 6
