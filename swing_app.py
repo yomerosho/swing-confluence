@@ -581,15 +581,19 @@ with tab_diagnostic:
         had_patterns  = len(diags) - no_data - no_patterns
 
         # Count where setups blocked
-        blocked_gex     = 0
-        blocked_whales  = 0
-        passed_all      = 0
-        no_chain        = 0
+        blocked_gex          = 0
+        blocked_whales       = 0
+        passed_all           = 0
+        passed_with_override = 0
+        no_chain             = 0
         for d in diags:
             for r in d.get("results", []):
                 if r["blocked_at"] == "gex":      blocked_gex    += 1
                 elif r["blocked_at"] == "whales": blocked_whales += 1
                 elif r["blocked_at"] == "passed": passed_all     += 1
+                elif r["blocked_at"] == "passed_with_override":
+                    passed_all           += 1
+                    passed_with_override += 1
                 elif r["blocked_at"] == "no_chain": no_chain     += 1
 
         st.markdown("### 📊 Gate Analysis Summary")
@@ -600,7 +604,7 @@ with tab_diagnostic:
         c3.metric("No Patterns", no_patterns)
         c4.metric("Blocked: GEX", blocked_gex)
         c5.metric("Blocked: Whales", blocked_whales)
-        c6.metric("✅ Passed", passed_all)
+        c6.metric("✅ Passed", passed_all, delta=f"{passed_with_override} via whale override" if passed_with_override else None)
 
         # Insight
         total_attempts = blocked_gex + blocked_whales + passed_all + no_chain
@@ -670,11 +674,12 @@ with tab_diagnostic:
                     "GEX":    "✅" if r["gex_supports"] else "❌",
                     "Whales": "✅" if r["whale_supports"] else "❌",
                     "Blocked At": {
-                        "patterns":  "🚫 No patterns",
-                        "gex":       "❌ GEX",
-                        "whales":    "❌ Whales",
-                        "no_chain":  "⚠️ No chain",
-                        "passed":    "✅ PASSED",
+                        "patterns":              "🚫 No patterns",
+                        "gex":                   "❌ GEX",
+                        "whales":                "❌ Whales",
+                        "no_chain":              "⚠️ No chain",
+                        "passed":                "✅ PASSED",
+                        "passed_with_override":  "✅ PASSED (whale override)",
                     }.get(r["blocked_at"], r["blocked_at"]),
                     "Whale $": f"${r['whale_top_premium']:,.0f}" if r['whale_top_premium'] else "—",
                 })

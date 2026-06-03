@@ -47,6 +47,7 @@ SWING_NAMES  = [
 ALL_TICKERS = INDICES_ETFS + MEGA_CAPS + SWING_NAMES
 
 WHALE_THRESHOLD       = 500_000
+WHALE_OVERRIDE        = 5_000_000   # $5M+ in directional whale flow → bypass GEX
 MIN_OI_THRESHOLD      = 500       # minimum OI for a tradeable strike
 PREFERRED_OI_THRESHOLD = 1000     # preferred OI for full-confidence pick
 
@@ -409,28 +410,35 @@ class GEXAnalyzer:
         magnet_row = df.groupby("strike")["magnet_score"].sum().sort_values(ascending=False).head(1)
         magnet = float(magnet_row.index[0]) if not magnet_row.empty else None
 
-        # Confluence verdict
+        # Confluence verdict — OR logic (either structural support OR magnet pull qualifies)
         if direction == "CALL":
-            # Bullish needs: support BELOW spot (floor) + magnet ABOVE (target)
-            supports = (
-                support is not None and spot > support and
-                magnet is not None and magnet > spot
-            )
-            summary = (
-                f"GEX support ${support:.2f} below + magnet ${magnet:.2f} above"
-                if supports else
-                f"GEX positioning doesn't favor bullish (support: {support}, magnet: {magnet})"
-            )
+            has_support_below = support is not None and spot > support
+            has_magnet_above  = magnet is not None and magnet > spot
+
+            supports = has_support_below or has_magnet_above
+
+            if has_support_below and has_magnet_above:
+                summary = f"GEX support ${support:.2f} below + magnet ${magnet:.2f} above (strong)"
+            elif has_support_below:
+                summary = f"GEX support ${support:.2f} below (magnet ${magnet:.2f} unfavorable)" if magnet else f"GEX support ${support:.2f} below"
+            elif has_magnet_above:
+                summary = f"Magnet pulling toward ${magnet:.2f} above (no clear GEX floor)"
+            else:
+                summary = f"GEX positioning unfavorable for bullish (support: {support}, magnet: {magnet})"
         else:  # PUT
-            supports = (
-                resistance is not None and spot < resistance and
-                magnet is not None and magnet < spot
-            )
-            summary = (
-                f"GEX resistance ${resistance:.2f} above + magnet ${magnet:.2f} below"
-                if supports else
-                f"GEX positioning doesn't favor bearish (resistance: {resistance}, magnet: {magnet})"
-            )
+            has_resistance_above = resistance is not None and spot < resistance
+            has_magnet_below     = magnet is not None and magnet < spot
+
+            supports = has_resistance_above or has_magnet_below
+
+            if has_resistance_above and has_magnet_below:
+                summary = f"GEX resistance ${resistance:.2f} above + magnet ${magnet:.2f} below (strong)"
+            elif has_resistance_above:
+                summary = f"GEX resistance ${resistance:.2f} above (magnet ${magnet:.2f} unfavorable)" if magnet else f"GEX resistance ${resistance:.2f} above"
+            elif has_magnet_below:
+                summary = f"Magnet pulling toward ${magnet:.2f} below (no clear GEX ceiling)"
+            else:
+                summary = f"GEX positioning unfavorable for bearish (resistance: {resistance}, magnet: {magnet})"
 
         return {
             "supports":   supports,
@@ -631,13 +639,19 @@ class SwingScanner:
                 result["whale_count"]       = whale_result["count"]
                 result["whale_top_premium"] = whale_result["premium"]
 
-                # Determine where it blocked
-                if not gex_result["supports"]:
+                # Whale override check
+                whale_override = whale_result["premium"] >= WHALE_OVERRIDE
+                result["whale_override"] = whale_override
+
+                # Effective gate (mirrors _build_setup logic)
+                gex_passes = gex_result["supports"] or whale_override
+
+                if not gex_passes:
                     result["blocked_at"] = "gex"
                 elif not whale_result["supports"]:
                     result["blocked_at"] = "whales"
                 else:
-                    result["blocked_at"] = "passed"
+                    result["blocked_at"] = "passed_with_override" if whale_override and not gex_result["supports"] else "passed"
 
                 diag["results"].append(result)
 
@@ -726,15 +740,23 @@ class SwingScanner:
 
         # Factor 2: GEX
         gex_result = self.gex.analyze(chain, spot, direction)
-        if not gex_result["supports"]:
-            return None  # 3-of-3 not met
 
         # Factor 3: Whales
         whale_result = self.whale.analyze(chain, spot, direction)
-        if not whale_result["supports"]:
-            return None  # 3-of-3 not met
 
-        # ✅ All 3 factors align — build the setup
+        # Whale override: if directional flow ≥ $5M, GEX gate can be bypassed
+        whale_override_active = whale_result["premium"] >= WHALE_OVERRIDE
+
+        # Confluence check
+        gex_passes   = gex_result["supports"] or whale_override_active
+        whale_passes = whale_result["supports"]
+
+        if not gex_passes:
+            return None  # GEX failed (and not enough whale flow to override)
+        if not whale_passes:
+            return None  # Whale gate failed
+
+        # ✅ All factors align — build the setup
 
         # Conviction scoring
         if has_daily and has_4h:
@@ -744,13 +766,19 @@ class SwingScanner:
         else:
             conviction = 4  # MEDIUM-HIGH (4H only)
 
+        # Tag whale-override setups
+        if whale_override_active and not gex_result["supports"]:
+            gex_summary = f"⚠️ GEX neutral but ${whale_result['premium']/1_000_000:.1f}M whale flow overrides · {gex_result['summary']}"
+        else:
+            gex_summary = gex_result["summary"]
+
         # Trade plan
         plan = self._build_trade_plan(spot, direction, patterns, gex_result, chain)
 
         return ConfluenceSetup(
             ticker=ticker, direction=direction, conviction=conviction, spot=spot,
             patterns=patterns, has_daily=has_daily, has_4h=has_4h,
-            gex_summary=gex_result["summary"],
+            gex_summary=gex_summary,
             nearest_magnet=gex_result["magnet"],
             support_level=gex_result["support"],
             resistance_level=gex_result["resistance"],
