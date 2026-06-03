@@ -28,21 +28,30 @@ logger = logging.getLogger(__name__)
 
 INDICES_ETFS = ["SPY", "QQQ", "IWM", "DIA", "XLF", "EEM"]
 MEGA_CAPS    = ["AAPL", "MSFT", "NVDA", "META", "GOOGL", "AMZN", "TSLA"]
-SWING_NAMES  = [
+INDICES_ETFS = ["SPY", "QQQ", "IWM"]
+
+MEGA_CAPS    = ["AAPL", "MSFT", "NVDA", "META", "GOOGL", "AMZN", "TSLA"]
+
+SWING_NAMES = [
     # Semis & Hardware
     "AMD", "ARM", "AVGO", "INTC", "LRCX", "MU", "TSM",
+    "QCOM", "AMAT",                                      # ← added
     # Software & Cloud
     "ADBE", "CRM", "ORCL", "SHOP", "SNOW", "ZS",
+    "CRWD", "PANW",                                      # ← added (cyber, deep OI)
     # Financials
     "COIN", "GS", "HOOD", "JPM", "PYPL", "SOFI", "V",
+    "BAC",                                               # ← added (penny-wide spreads)
     # Healthcare
     "ISRG", "UNH",
     # Energy & Industrials
     "CAT", "CVX", "DE", "FSLR", "GE", "OXY", "XOM",
     # Consumer & Internet
     "BABA", "JD", "NFLX", "PINS", "RBLX", "RDDT", "UBER", "WMT",
+    "DIS",                                               # ← added
     # Speculative / High-Beta
     "HIMS", "LMND", "OKLO", "PLTR", "RKLB",
+    "MSTR",                                              # ← added (one of the deepest single-name options markets)
 ]
 ALL_TICKERS = INDICES_ETFS + MEGA_CAPS + SWING_NAMES
 
