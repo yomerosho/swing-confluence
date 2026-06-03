@@ -154,6 +154,7 @@ def render_setup_card(s: ConfluenceSetup) -> str:
         <div style='margin-top:12px;padding-top:10px;border-top:1px solid {PALETTE["border"]};
                     font-size:0.74rem;color:{PALETTE["text_dim"]};font-family:monospace;'>
           Hold: <b style='color:{PALETTE["text"]};'>{s.hold_days}</b>
+          {f' · Strike OI: <b style="color:{PALETTE["text"]};">{s.strike_oi:,}</b> {s.oi_quality}' if s.strike_oi else ''}
           {f' · Support: <b style="color:{PALETTE["text"]};">${s.support_level:.2f}</b>' if s.support_level else ''}
           {f' · Resistance: <b style="color:{PALETTE["text"]};">${s.resistance_level:.2f}</b>' if s.resistance_level else ''}
         </div>

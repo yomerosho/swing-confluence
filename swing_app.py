@@ -43,15 +43,83 @@ GMAIL_PASS    = get_secret("gmail", "password", "")
 st.markdown(f"""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;800&family=JetBrains+Mono:wght@300;400;600&display=swap');
-html, body, [class*="css"] {{ font-family: 'Syne', sans-serif; background: {PALETTE['bg']}; color: {PALETTE['text']}; }}
-section[data-testid="stSidebar"] {{ background: #090c14; border-right: 1px solid #1a2030; }}
-section[data-testid="stSidebar"] * {{ color: #e0e8f0 !important; }}
-.stButton > button {{
-  background: linear-gradient(135deg, #3a1a6b, #1a0d4a);
-  color: {PALETTE['brand']}; border: none; border-radius: 6px;
-  padding: 10px 20px; font-family: 'JetBrains Mono', monospace;
+
+/* Force dark theme globally */
+html, body, .stApp, [class*="css"], .main, .block-container {{
+  font-family: 'Syne', sans-serif !important;
+  background: {PALETTE['bg']} !important;
+  color: {PALETTE['text']} !important;
 }}
-.stButton > button:hover {{ background: linear-gradient(135deg, #4a2a80, #2a0f60); }}
+
+/* Main content area */
+.main .block-container {{ background: {PALETTE['bg']} !important; padding-top: 2rem; }}
+[data-testid="stAppViewContainer"] {{ background: {PALETTE['bg']} !important; }}
+[data-testid="stHeader"] {{ background: {PALETTE['bg']} !important; }}
+[data-testid="stToolbar"] {{ background: transparent !important; }}
+
+/* Sidebar */
+section[data-testid="stSidebar"] {{ background: #090c14 !important; border-right: 1px solid #1a2030; }}
+section[data-testid="stSidebar"] * {{ color: #e0e8f0 !important; }}
+section[data-testid="stSidebar"] .stCheckbox label {{ color: #e0e8f0 !important; }}
+
+/* Status messages */
+.stStatus, [data-testid="stStatusWidget"] {{
+  background: {PALETTE['card']} !important;
+  color: {PALETTE['text']} !important;
+  border: 1px solid {PALETTE['border']} !important;
+}}
+.stStatus * {{ color: {PALETTE['text']} !important; }}
+.stAlert {{ background: {PALETTE['card']} !important; color: {PALETTE['text']} !important; }}
+
+/* Headings & text */
+h1, h2, h3, h4, h5, h6 {{ color: {PALETTE['text']} !important; }}
+p, span, label, div {{ color: {PALETTE['text_dim']}; }}
+
+/* Metric widgets — for the summary boxes (Total/MAX/HIGH/etc.) */
+[data-testid="metric-container"] {{
+  background: {PALETTE['card']} !important;
+  border: 1px solid {PALETTE['border']} !important;
+  border-radius: 10px;
+  padding: 14px 18px;
+}}
+[data-testid="metric-container"] label {{
+  color: {PALETTE['text_muted']} !important;
+  font-family: 'JetBrains Mono', monospace !important;
+  font-size: 0.7rem !important;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}}
+[data-testid="metric-container"] [data-testid="stMetricValue"] {{
+  color: {PALETTE['brand']} !important;
+  font-family: 'JetBrains Mono', monospace !important;
+  font-weight: 700 !important;
+}}
+
+/* Text inputs (for the custom tickers field) */
+.stTextInput input, .stTextArea textarea {{
+  background: {PALETTE['card_dark']} !important;
+  color: {PALETTE['text']} !important;
+  border: 1px solid {PALETTE['border']} !important;
+  font-family: 'JetBrains Mono', monospace !important;
+}}
+.stTextInput label, .stTextArea label {{ color: {PALETTE['text_dim']} !important; }}
+
+/* Buttons */
+.stButton > button {{
+  background: linear-gradient(135deg, #3a1a6b, #1a0d4a) !important;
+  color: {PALETTE['brand']} !important;
+  border: none !important;
+  border-radius: 6px;
+  padding: 10px 20px;
+  font-family: 'JetBrains Mono', monospace;
+}}
+.stButton > button:hover {{ background: linear-gradient(135deg, #4a2a80, #2a0f60) !important; }}
+
+/* Captions */
+.stCaption, small {{ color: {PALETTE['text_muted']} !important; }}
+
+/* Horizontal divider */
+hr {{ border-color: #1a2030 !important; }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -74,16 +142,36 @@ with st.sidebar:
 
     st.markdown("### 🎯 Scope")
 
-    use_indices = st.checkbox("Indices/ETFs (8)", value=True)
+    use_indices = st.checkbox("Indices/ETFs (6)", value=True)
     use_mega    = st.checkbox("Mega Caps (7)", value=True)
-    use_swing   = st.checkbox("Swing Names (21)", value=True)
+    use_swing   = st.checkbox("Swing Names (42)", value=True)
 
     selected = []
     if use_indices: selected += INDICES_ETFS
     if use_mega:    selected += MEGA_CAPS
     if use_swing:   selected += SWING_NAMES
 
-    st.caption(f"Will scan {len(selected)} tickers")
+    # Custom tickers
+    custom_raw = st.text_input(
+        "➕ Additional tickers",
+        value="",
+        placeholder="e.g. QCOM, SMCI, AVGO",
+        help="Comma or space separated. Added on top of selected categories.",
+    )
+    custom_tickers = []
+    if custom_raw.strip():
+        custom_tickers = [
+            t.strip().upper() for t in custom_raw.replace(",", " ").split()
+            if t.strip().isalpha() and 1 <= len(t.strip()) <= 6
+        ]
+        # Dedupe while preserving order
+        custom_tickers = [t for t in custom_tickers if t not in selected]
+        selected += custom_tickers
+
+    if custom_tickers:
+        st.caption(f"Will scan {len(selected)} tickers (+{len(custom_tickers)} custom)")
+    else:
+        st.caption(f"Will scan {len(selected)} tickers")
 
     st.markdown("---")
     scan_btn  = st.button("🎯 Run Confluence Scan", type="primary")

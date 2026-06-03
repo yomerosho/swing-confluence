@@ -26,17 +26,29 @@ logger = logging.getLogger(__name__)
 
 # ── Tickers (36 confirmed) ────────────────────────────────────────────────────
 
-INDICES_ETFS = ["SPY", "QQQ", "IWM", "DIA", "TQQQ", "SQQQ", "XLF", "EEM"]
+INDICES_ETFS = ["SPY", "QQQ", "IWM", "DIA", "XLF", "EEM"]
 MEGA_CAPS    = ["AAPL", "MSFT", "NVDA", "META", "GOOGL", "AMZN", "TSLA"]
 SWING_NAMES  = [
-    "AMD", "ARM", "INTC", "ORCL", "COIN", "HOOD", "PLTR", "PYPL",
-    "NFLX", "SOFI", "RKLB", "IONQ", "IREN", "BABA", "JD", "UNH",
-    "LMND", "HIMS", "PINS", "OKLO", "RBLX", "RDDT", "WMT", "OXY",
-    "V", "XOM"
+    # Semis & Hardware
+    "AMD", "ARM", "AVGO", "INTC", "LRCX", "MU", "TSM",
+    # Software & Cloud
+    "ADBE", "CRM", "ORCL", "SHOP", "SNOW", "ZS",
+    # Financials
+    "COIN", "GS", "HOOD", "JPM", "PYPL", "SOFI", "V",
+    # Healthcare
+    "ISRG", "UNH",
+    # Energy & Industrials
+    "CAT", "CVX", "DE", "FSLR", "GE", "OXY", "XOM",
+    # Consumer & Internet
+    "BABA", "JD", "NFLX", "PINS", "RBLX", "RDDT", "UBER", "WMT",
+    # Speculative / High-Beta
+    "HIMS", "LMND", "OKLO", "PLTR", "RKLB",
 ]
 ALL_TICKERS = INDICES_ETFS + MEGA_CAPS + SWING_NAMES
 
-WHALE_THRESHOLD = 500_000
+WHALE_THRESHOLD       = 500_000
+MIN_OI_THRESHOLD      = 500       # minimum OI for a tradeable strike
+PREFERRED_OI_THRESHOLD = 1000     # preferred OI for full-confidence pick
 
 
 # ── Confluence Setup Output ───────────────────────────────────────────────────
@@ -73,6 +85,8 @@ class ConfluenceSetup:
     target:           float = 0
     risk_reward:      float = 0
     hold_days:        str = "1-3 days"
+    strike_oi:        int = 0
+    oi_quality:       str = ""
 
 
 # ── Alpaca Client ─────────────────────────────────────────────────────────────
@@ -142,8 +156,48 @@ class AlpacaClient:
             logger.error(f"{ticker} bars error: {e}")
             return pd.DataFrame()
 
+    def get_open_interest(self, ticker: str) -> dict:
+        """
+        Fetch Open Interest for all active option contracts.
+        Returns: {option_symbol: open_interest_int}
+        Uses the contracts endpoint which provides current OI.
+        """
+        oi_map = {}
+        try:
+            url = "https://paper-api.alpaca.markets/v2/options/contracts"
+            params = {
+                "underlying_symbols": ticker,
+                "status":             "active",
+                "limit":              1000,
+            }
+            page_token = None
+            pages      = 0
+
+            while pages < 10:
+                if page_token: params["page_token"] = page_token
+                r = requests.get(url, headers=self._headers(), params=params, timeout=15)
+                if r.status_code != 200:
+                    logger.debug(f"{ticker} OI {r.status_code}")
+                    break
+
+                data = r.json()
+                for c in data.get("option_contracts", []):
+                    sym = c.get("symbol")
+                    oi  = c.get("open_interest")
+                    if sym and oi is not None:
+                        try: oi_map[sym] = int(oi)
+                        except: pass
+
+                page_token = data.get("next_page_token")
+                if not page_token: break
+                pages += 1
+                time.sleep(0.1)
+        except Exception as e:
+            logger.debug(f"{ticker} OI fetch: {e}")
+        return oi_map
+
     def get_options_chain(self, ticker: str, days_out: int = 14) -> pd.DataFrame:
-        """Fetch options chain with Greeks."""
+        """Fetch options chain with Greeks AND open interest."""
         try:
             today   = datetime.now().date()
             end_dt  = today + timedelta(days=days_out)
@@ -188,6 +242,7 @@ class AlpacaClient:
                         "gamma":       g.get("gamma", 0),
                         "delta":       g.get("delta", 0),
                         "iv":          iv,
+                        "open_interest": 0,  # filled in below
                     })
 
                 page_token = data.get("next_page_token")
@@ -195,7 +250,21 @@ class AlpacaClient:
                 pages += 1
                 time.sleep(0.1)
 
-            return pd.DataFrame(all_rows) if all_rows else pd.DataFrame()
+            if not all_rows:
+                return pd.DataFrame()
+
+            df = pd.DataFrame(all_rows)
+
+            # Enrich with OI
+            oi_map = self.get_open_interest(ticker)
+            if oi_map:
+                df["open_interest"] = df["symbol"].map(oi_map).fillna(0).astype(int)
+
+            # Spread metrics for liquidity scoring
+            df["spread"]     = df["ask"] - df["bid"]
+            df["spread_pct"] = np.where(df["mid"] > 0, df["spread"] / df["mid"] * 100, 999)
+
+            return df
         except Exception as e:
             logger.error(f"{ticker} chain: {e}")
             return pd.DataFrame()
@@ -472,9 +541,9 @@ class SwingScanner:
     def _build_trade_plan(self, spot: float, direction: str,
                           patterns: List[PatternSignal],
                           gex_result: dict, chain: pd.DataFrame) -> dict:
-        """Build entry/stop/target/strike based on technical + GEX levels."""
+        """Build entry/stop/target/strike based on technical + GEX + OI liquidity."""
 
-        # Find ATM or slightly OTM strike with good liquidity (5-10 DTE preferred)
+        # Find liquid OTM strike — prefer 5-10 DTE, require OI for tight spreads
         target_dte_min, target_dte_max = 3, 14
         today = datetime.now().date()
 
@@ -486,31 +555,63 @@ class SwingScanner:
         df = df[df["option_type"] == direction.lower()]
 
         if df.empty:
-            # Fallback: any expiry
             df = chain[chain["option_type"] == direction.lower()]
 
-        strike, expiry = spot, ""
-        if not df.empty:
-            # Pick first OTM strike with bid > 0
-            if direction == "CALL":
-                otm = df[(df["strike"] > spot) & (df["bid"] > 0.05)].nsmallest(1, "strike")
-            else:
-                otm = df[(df["strike"] < spot) & (df["bid"] > 0.05)].nlargest(1, "strike")
+        # Filter to OTM only
+        if direction == "CALL":
+            df_otm = df[df["strike"] > spot].copy()
+        else:
+            df_otm = df[df["strike"] < spot].copy()
 
-            if not otm.empty:
-                strike = float(otm.iloc[0]["strike"])
-                expiry = str(otm.iloc[0]["expiry"])
+        # Tradeable basics: positive bid, sane spread
+        df_otm = df_otm[
+            (df_otm["bid"] > 0.05) &
+            (df_otm["spread_pct"] < 15)  # reject spreads > 15% of mid
+        ]
+
+        strike, expiry, picked_oi, oi_quality = spot, "", 0, "unknown"
+
+        if not df_otm.empty:
+            # Tier 1: PREFERRED — OI >= 1000 + spread <= 5%
+            tier1 = df_otm[
+                (df_otm["open_interest"] >= PREFERRED_OI_THRESHOLD) &
+                (df_otm["spread_pct"] <= 5)
+            ]
+            # Tier 2: ACCEPTABLE — OI >= 500 + spread <= 10%
+            tier2 = df_otm[
+                (df_otm["open_interest"] >= MIN_OI_THRESHOLD) &
+                (df_otm["spread_pct"] <= 10)
+            ]
+            # Tier 3: ANY — fall back to bid > 0.05 (already filtered)
+
+            if not tier1.empty:
+                pick = (tier1.nsmallest(1, "strike") if direction == "CALL"
+                        else tier1.nlargest(1, "strike"))
+                oi_quality = "✅ Liquid"
+            elif not tier2.empty:
+                pick = (tier2.nsmallest(1, "strike") if direction == "CALL"
+                        else tier2.nlargest(1, "strike"))
+                oi_quality = "🟡 Adequate"
+            else:
+                pick = (df_otm.nsmallest(1, "strike") if direction == "CALL"
+                        else df_otm.nlargest(1, "strike"))
+                oi_quality = "⚠️ Illiquid — wide spread"
+
+            if not pick.empty:
+                strike    = float(pick.iloc[0]["strike"])
+                expiry    = str(pick.iloc[0]["expiry"])
+                picked_oi = int(pick.iloc[0]["open_interest"])
 
         # Entry/stop/target from technical levels
-        primary_pattern = patterns[0]  # Strongest pattern
+        primary_pattern = patterns[0]
         level           = primary_pattern.level
 
         if direction == "CALL":
-            entry_above = float(spot + 0.005 * spot)  # 0.5% above current as confirmation
-            stop_below  = float(min(level * 0.995, spot * 0.985))  # Below pattern level
+            entry_above = float(spot + 0.005 * spot)
+            stop_below  = float(min(level * 0.995, spot * 0.985))
             target      = float(gex_result["magnet"]) if gex_result["magnet"] and gex_result["magnet"] > spot else float(spot * 1.03)
         else:
-            entry_above = float(spot - 0.005 * spot)  # 0.5% below for puts (entry below)
+            entry_above = float(spot - 0.005 * spot)
             stop_below  = float(max(level * 1.005, spot * 1.015))
             target      = float(gex_result["magnet"]) if gex_result["magnet"] and gex_result["magnet"] < spot else float(spot * 0.97)
 
@@ -526,6 +627,8 @@ class SwingScanner:
             "stop_below":  round(stop_below, 2),
             "target":      round(target, 2),
             "risk_reward": rr,
+            "strike_oi":   picked_oi,
+            "oi_quality":  oi_quality,
         }
 
     def scan_all(self, tickers: List[str] = None,
