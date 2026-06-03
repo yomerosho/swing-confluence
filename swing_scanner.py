@@ -19,7 +19,7 @@ from datetime import datetime, timedelta
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional
 
-from swing_patterns import PatternDetector, PatternSignal
+from swing_patterns import PatternDetector, PatternSignal, Indicators
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -66,11 +66,17 @@ MIN_OI_THRESHOLD      = 500       # minimum OI for a tradeable strike
 PREFERRED_OI_THRESHOLD = 1000     # preferred OI for full-confidence pick
 MIN_RISK_REWARD       = 1.0       # reject setups with R/R below 1:1
 
-# Entry anchoring (retracement/retest model) — entry is placed at the pattern's
-# structural level, NOT at a flat offset from spot.
-ENTRY_BUF             = 0.001     # fill a touch before the exact level (0.1%)
-STOP_BEYOND_LEVEL     = 0.0075    # stop = 0.75% past the level (invalidation)
-MAX_RETRACE_PCT       = 0.05      # if level is >5% from spot, re-anchor (won't fill in 1-3d)
+# Trade-plan geometry (volatility-aware). Entry is the LIVE SPOT — the signal
+# has already fired, so we enter the move that is underway rather than pinning a
+# limit to a stale pattern level (the old model produced un-fillable entries far
+# from price and fantasy R/R). Structure becomes the STOP, sized in ATR so the
+# risk leg can't be faked tight or blown out wide.
+ATR_FALLBACK_PCT      = 0.015     # if ATR unavailable, assume 1.5% of spot
+STOP_LEVEL_BUFFER     = 0.30      # place stop 0.30·ATR beyond the structural level
+RISK_MIN_ATR          = 0.60      # floor the risk leg (kills fake-tight 1:7 R/R)
+RISK_MAX_ATR          = 2.50      # cap the risk leg (swing stop, not a position trade)
+TARGET_MIN_ATR        = 1.00      # a target must be ≥1·ATR away or step to the next level
+ATR_TARGET_MULT       = 1.50      # projected target when no level is far enough out
 
 
 # ── Confluence Setup Output ───────────────────────────────────────────────────
@@ -716,6 +722,17 @@ class SwingScanner:
             if df_daily.empty:
                 return []
 
+            # Daily ATR — drives volatility-aware stops/targets in the trade plan
+            try:
+                atr_series = Indicators.atr(
+                    df_daily["High"], df_daily["Low"], df_daily["Close"]
+                )
+                atr_d = float(atr_series.iloc[-1]) if not atr_series.empty else 0.0
+                if not np.isfinite(atr_d):
+                    atr_d = 0.0
+            except Exception:
+                atr_d = 0.0
+
             # Detect patterns on both timeframes
             daily_patterns = PatternDetector(ticker, "1D").detect_all(df_daily)
             h4_patterns    = PatternDetector(ticker, "4H").detect_all(df_4h) if not df_4h.empty else []
@@ -732,12 +749,12 @@ class SwingScanner:
 
             # Try CALL direction if we have call patterns
             if calls:
-                setup = self._build_setup(ticker, spot, "CALL", calls)
+                setup = self._build_setup(ticker, spot, "CALL", calls, atr_d)
                 if setup: setups.append(setup)
 
             # Try PUT direction
             if puts:
-                setup = self._build_setup(ticker, spot, "PUT", puts)
+                setup = self._build_setup(ticker, spot, "PUT", puts, atr_d)
                 if setup: setups.append(setup)
 
             return setups
@@ -747,7 +764,7 @@ class SwingScanner:
             return []
 
     def _build_setup(self, ticker: str, spot: float, direction: str,
-                      patterns: List[PatternSignal]) -> Optional[ConfluenceSetup]:
+                      patterns: List[PatternSignal], atr: float = 0.0) -> Optional[ConfluenceSetup]:
         """Build a setup if all 3 confluence factors align."""
 
         # Factor 1: Technical patterns (already validated)
@@ -794,7 +811,7 @@ class SwingScanner:
             gex_summary = gex_result["summary"]
 
         # Trade plan
-        plan = self._build_trade_plan(spot, direction, patterns, gex_result, chain)
+        plan = self._build_trade_plan(spot, direction, patterns, gex_result, chain, atr)
 
         # Filter: reject setups with insufficient risk/reward
         if plan["risk_reward"] < MIN_RISK_REWARD:
@@ -819,7 +836,8 @@ class SwingScanner:
 
     def _build_trade_plan(self, spot: float, direction: str,
                           patterns: List[PatternSignal],
-                          gex_result: dict, chain: pd.DataFrame) -> dict:
+                          gex_result: dict, chain: pd.DataFrame,
+                          atr: float = 0.0) -> dict:
         """Build entry/stop/target/strike based on technical + GEX + OI liquidity."""
 
         # Find liquid OTM strike — prefer 5-10 DTE, require OI for tight spreads
@@ -881,43 +899,58 @@ class SwingScanner:
                 expiry    = str(pick.iloc[0]["expiry"])
                 picked_oi = int(pick.iloc[0]["open_interest"])
 
-        # ── Entry/stop/target — anchored to STRUCTURE, not spot ──────────────
-        # Previously entry = spot ± 0.5%, which ignored every level and could
-        # drop a short right onto a support shelf. We now anchor the entry to the
-        # pattern's level (retracement/retest) with the stop just BEYOND it:
-        #   PUT  → short the move UP into the rejection level; stop above it
-        #   CALL → buy the move DOWN into the held level; stop below it
-        # This is what produces a tight, structurally-justified risk leg.
-        primary_pattern = patterns[0]
-        level           = float(primary_pattern.level)
-
-        def _too_far(lv) -> bool:
-            return (not lv) or lv <= 0 or abs(lv - spot) / spot > MAX_RETRACE_PCT
+        # ── Entry / stop / target — entry is LIVE SPOT; structure is the STOP ──
+        # The signal has already fired, so we enter the move underway at the
+        # current price instead of pinning a limit to a stale pattern level (the
+        # old model anchored entry to e.g. a filled FVG that price had already
+        # rejected away from, giving un-fillable entries and fantasy R/R). The
+        # pattern level and GEX support/resistance become the *invalidation*
+        # (stop), and the stop distance is clamped to an ATR band so R/R can't be
+        # faked tight or blown out wide. Targets step past magnets that sit too
+        # close to spot to justify a fresh entry.
+        atr_val        = float(atr) if (atr and atr > 0) else spot * ATR_FALLBACK_PCT
+        pattern_levels = [float(p.level) for p in patterns if p.level and p.level > 0]
+        min_dist       = max(TARGET_MIN_ATR * atr_val, spot * 0.01)
 
         if direction == "CALL":
-            # If the pattern level is too far to fill in 1-3d, re-anchor to the
-            # nearest GEX support, then to a spot-relative anchor as last resort.
-            anchor = level
-            if _too_far(anchor):
-                gsup   = gex_result.get("support")
-                anchor = gsup if not _too_far(gsup) else spot * 0.995
-            entry_above = float(anchor * (1 + ENTRY_BUF))           # limit just above the level
-            stop_below  = float(anchor * (1 - STOP_BEYOND_LEVEL))   # invalidation below the level
-            mag         = gex_result.get("magnet")
-            target      = float(mag) if (mag and mag > spot) else float(spot * 1.03)
-            if target <= entry_above:                               # keep target above entry
-                target = float(entry_above * 1.03)
+            entry = spot
+            # Invalidation = nearest structure BELOW spot (pattern level or GEX support)
+            below = [lv for lv in pattern_levels if lv < spot]
+            gsup  = gex_result.get("support")
+            if gsup and gsup < spot:
+                below.append(float(gsup))
+            struct   = max(below) if below else None        # closest support beneath
+            raw_stop = (struct - STOP_LEVEL_BUFFER * atr_val) if struct is not None \
+                       else (spot - 1.5 * atr_val)
+            risk = min(max(spot - raw_stop, RISK_MIN_ATR * atr_val), RISK_MAX_ATR * atr_val)
+            stop = spot - risk
+            # Target = nearest magnet/resistance ≥1·ATR above; else ATR projection
+            ups = sorted(
+                lv for lv in (gex_result.get("magnet"), gex_result.get("resistance"))
+                if lv and lv > entry + min_dist
+            )
+            target = ups[0] if ups else entry + ATR_TARGET_MULT * atr_val
         else:  # PUT
-            anchor = level
-            if _too_far(anchor):
-                gres   = gex_result.get("resistance")
-                anchor = gres if not _too_far(gres) else spot * 1.005
-            entry_above = float(anchor * (1 - ENTRY_BUF))           # limit just below the level
-            stop_below  = float(anchor * (1 + STOP_BEYOND_LEVEL))   # invalidation above the level
-            mag         = gex_result.get("magnet")
-            target      = float(mag) if (mag and mag < spot) else float(spot * 0.97)
-            if target >= entry_above:                               # keep target below entry
-                target = float(entry_above * 0.97)
+            entry = spot
+            above = [lv for lv in pattern_levels if lv > spot]
+            gres  = gex_result.get("resistance")
+            if gres and gres > spot:
+                above.append(float(gres))
+            struct   = min(above) if above else None         # closest resistance above
+            raw_stop = (struct + STOP_LEVEL_BUFFER * atr_val) if struct is not None \
+                       else (spot + 1.5 * atr_val)
+            risk = min(max(raw_stop - spot, RISK_MIN_ATR * atr_val), RISK_MAX_ATR * atr_val)
+            stop = spot + risk
+            downs = sorted(
+                (lv for lv in (gex_result.get("magnet"), gex_result.get("support"))
+                 if lv and lv < entry - min_dist),
+                reverse=True,
+            )
+            target = downs[0] if downs else entry - ATR_TARGET_MULT * atr_val
+
+        entry_above = float(entry)
+        stop_below  = float(stop)
+        target      = float(target)
 
         # Risk/reward
         risk   = abs(entry_above - stop_below)
