@@ -10,6 +10,15 @@ from typing import List
 from swing_scanner import ConfluenceSetup
 
 
+def _minify(html: str) -> str:
+    """
+    Strip leading whitespace from every line so Streamlit's markdown
+    parser doesn't interpret indented HTML as a code block.
+    Preserves the content; only removes left-side indentation.
+    """
+    return "\n".join(line.lstrip() for line in html.splitlines() if line.strip())
+
+
 # ── Color palette ─────────────────────────────────────────────────────────────
 
 PALETTE = {
@@ -76,7 +85,7 @@ def render_setup_card(s: ConfluenceSetup) -> str:
     # R/R color
     rr_color = PALETTE["green"] if s.risk_reward >= 1.5 else (PALETTE["gold"] if s.risk_reward >= 1.0 else PALETTE["red"])
 
-    return f"""
+    return _minify(f"""
     <div style='background:{PALETTE["card"]};border:1px solid {PALETTE["border"]};
                 border-left:4px solid {conv_color};border-radius:12px;
                 padding:20px 24px;margin:14px 0;color:{PALETTE["text"]};
@@ -160,7 +169,7 @@ def render_setup_card(s: ConfluenceSetup) -> str:
         </div>
       </div>
     </div>
-    """
+    """)
 
 
 # ── Full email/dashboard report ───────────────────────────────────────────────
