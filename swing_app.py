@@ -247,9 +247,9 @@ with st.sidebar:
 
     st.markdown("### 🎯 Scope")
 
-    use_indices = st.checkbox("Indices/ETFs (6)", value=True)
+    use_indices = st.checkbox("Indices/ETFs (3)", value=True)
     use_mega    = st.checkbox("Mega Caps (7)", value=True)
-    use_swing   = st.checkbox("Swing Names (42)", value=True)
+    use_swing   = st.checkbox("Swing Names (63)", value=True)
 
     selected = []
     if use_indices: selected += INDICES_ETFS
