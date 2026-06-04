@@ -3,8 +3,8 @@
 
 yshobowa@gmail.com,Yomi
 xaintmark@gmail.com,Mark
-# Pamelaabina24@gmail.com,Pamela
-# Cenezuagu@globalinconsulting.com,Obi
-# Uzoma.Onukwubiri@gmail.com,Uzo
+Pamelaabina24@gmail.com,Pamela
+Cenezuagu@globalinconsulting.com,Obi
+Uzoma.Onukwubiri@gmail.com,Uzo
 Ugonma.Onukwubiri@gmail.com,Ugo
 adesholamakinde@gmail.com,Shola
