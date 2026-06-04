@@ -297,6 +297,17 @@ with st.sidebar:
 
     st.markdown("---")
     scan_btn  = st.button("🎯 Run Confluence Scan", type="primary")
+
+    email_min_conv = st.selectbox(
+        "📧 Email which setups?",
+        options=[6, 5, 4],
+        format_func=lambda c: {
+            6: "MAX only (6★)",
+            5: "HIGH + MAX (5★+)",
+            4: "All convictions (4★+)",
+        }[c],
+        index=0,   # default to MAX — loosen this per-scan for ad-hoc plays
+    )
     email_btn = st.button("📧 Email Results")
 
     if st.session_state.last_scan:
@@ -394,11 +405,18 @@ if email_btn:
     if not st.session_state.setups:
         st.warning("⚠️ Run a scan first")
     else:
-        html = build_swing_report(st.session_state.setups, "Manual Scan")
-        subj = f"🎯 SwingConfluence · {len(st.session_state.setups)} Setup(s) · {datetime.now().strftime('%b %d %H:%M CT')}"
-        ok, msg = send_email(html, subj)
-        if ok: st.success(f"✅ {msg}")
-        else:  st.error(f"❌ {msg}")
+        to_send = [s for s in st.session_state.setups
+                   if s.conviction >= email_min_conv]
+        if not to_send:
+            st.warning(f"⚠️ No setups at {email_min_conv}★+ to email "
+                       f"({len(st.session_state.setups)} found at lower tiers)")
+        else:
+            html = build_swing_report(to_send, "Manual Scan")
+            subj = (f"🎯 SwingConfluence · {len(to_send)} Setup(s) · "
+                    f"{datetime.now().strftime('%b %d %H:%M CT')}")
+            ok, msg = send_email(html, subj)
+            if ok: st.success(f"✅ {msg} · {len(to_send)} setup(s) at {email_min_conv}★+")
+            else:  st.error(f"❌ {msg}")
 
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
