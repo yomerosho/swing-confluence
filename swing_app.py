@@ -136,6 +136,37 @@ p, span, label, div {{ color: #d4dce8; }}
 }}
 .stTextInput label, .stTextArea label {{ color: #d4dce8 !important; font-weight: 600; }}
 
+/* Selectbox (e.g. email conviction picker) — closed control */
+.stSelectbox label {{ color: #d4dce8 !important; font-weight: 600; }}
+.stSelectbox div[data-baseweb="select"] > div {{
+  background: {PALETTE['card_dark']} !important;
+  border: 1px solid {PALETTE['border']} !important;
+  color: #ffffff !important;
+  font-family: 'JetBrains Mono', monospace !important;
+}}
+.stSelectbox div[data-baseweb="select"] div {{ color: #ffffff !important; }}
+.stSelectbox div[data-baseweb="select"] svg {{
+  fill: #d4dce8 !important; color: #d4dce8 !important;
+}}
+
+/* Selectbox dropdown menu — renders in a portal outside the sidebar,
+   so the app's other dark rules don't reach it. Force readable contrast. */
+div[data-baseweb="popover"] div[data-baseweb="menu"],
+ul[role="listbox"] {{
+  background: {PALETTE['card']} !important;
+  border: 1px solid {PALETTE['border']} !important;
+}}
+ul[role="listbox"] li {{
+  background: {PALETTE['card']} !important;
+  color: #ffffff !important;
+  font-family: 'JetBrains Mono', monospace !important;
+}}
+ul[role="listbox"] li:hover,
+ul[role="listbox"] li[aria-selected="true"] {{
+  background: {PALETTE['brand_soft']} !important;
+  color: {PALETTE['brand']} !important;
+}}
+
 /* Help tooltips (?) icon */
 [data-testid="stTooltipIcon"] svg {{ color: #6a7a90 !important; fill: #6a7a90 !important; }}
 
