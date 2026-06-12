@@ -162,6 +162,7 @@ def render_setup_card(s: ConfluenceSetup) -> str:
         if rr >= 2.0: return "✅ STRONG"
         if rr >= 1.5: return "✅ GOOD"
         if rr >= 1.0: return "🟡 OK"
+        if rr >= 0.75: return "⚠️ MARGINAL"
         return "⚠️ POOR"
 
     rr_t1_color = _rr_color(rr_t1)
