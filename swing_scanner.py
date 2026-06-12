@@ -521,46 +521,46 @@ def _evaluate_strat(
 ) -> tuple:
     """
     Returns (strat_active: bool, strat_summary: str, conviction_bonus: int).
-    conviction_bonus is 1 when Strat adds a meaningful signal.
 
-    Strat signals that count toward conviction:
-    - Directionally aligned combo on Daily or 4H
-    - F2D (for CALL) or F2U (for PUT) on Daily or 4H
-    - PMG on either timeframe
-    - FTFC aligned with direction (all 3 TFs same bias)
+    Bonus tiers:
+      2 = ELITE signal: F2 trap, FTFC, or PMG — jumps straight to 7★ regardless
+          of base conviction (even a 5★ Daily-only setup becomes 7★ ELITE)
+      1 = GOOD signal: directional combo aligned — adds +1 to base conviction
+      0 = no Strat signal
     """
     signals = []
     bonus   = 0
 
     call = direction == "CALL"
 
-    # Check F2 traps — these are the highest-quality reversal signals
+    # ── Tier 2 signals: F2 traps, FTFC, PMG ─────────────────────────────────
+    # These are high-conviction reversals / continuations — boost straight to 7★
+
     for strat, tf_label in [(strat_daily, "Daily"), (strat_4h, "4H")]:
         if call and strat.is_f2d:
             signals.append(f"F2D 🪤 on {tf_label} (bears trapped)")
-            bonus = 1
+            bonus = max(bonus, 2)
         if not call and strat.is_f2u:
             signals.append(f"F2U 🪤 on {tf_label} (bulls trapped)")
-            bonus = 1
+            bonus = max(bonus, 2)
 
-    # Check combos aligned with direction
+    for strat, tf_label in [(strat_daily, "Daily"), (strat_4h, "4H")]:
+        if strat.is_pmg:
+            signals.append(f"⚡ PMG on {tf_label} ({strat.pmg_count} bars)")
+            bonus = max(bonus, 2)
+
+    ftfc_dir_map = {"BULL": "CALL", "BEAR": "PUT"}
+    if ftfc.ftfc and ftfc_dir_map.get(ftfc.ftfc_dir) == direction:
+        signals.append(f"FTFC {ftfc.summary}")
+        bonus = max(bonus, 2)
+
+    # ── Tier 1 signals: directional combos ───────────────────────────────────
+    # Good confirmation — adds +1 to base conviction
     for strat, tf_label in [(strat_daily, "Daily"), (strat_4h, "4H")]:
         if strat.combo and strat.combo_dir == direction:
             signals.append(f"{strat.combo} ▲ on {tf_label}" if call
                            else f"{strat.combo} ▼ on {tf_label}")
-            bonus = 1
-
-    # PMG — reversal brewing regardless of direction label
-    for strat, tf_label in [(strat_daily, "Daily"), (strat_4h, "4H")]:
-        if strat.is_pmg:
-            signals.append(f"⚡ PMG on {tf_label} ({strat.pmg_count} bars)")
-            bonus = 1
-
-    # FTFC aligned with trade direction
-    ftfc_dir_map = {"BULL": "CALL", "BEAR": "PUT"}
-    if ftfc.ftfc and ftfc_dir_map.get(ftfc.ftfc_dir) == direction:
-        signals.append(f"FTFC {ftfc.summary}")
-        bonus = 1
+            bonus = max(bonus, 1)
 
     strat_active = bool(signals)
     summary      = " · ".join(signals) if signals else ""
@@ -830,9 +830,14 @@ class SwingScanner:
             direction, _sd, _s4, _ft
         )
 
-        # Boost to 7★ ELITE when Strat adds signal on top of 6★ or 5★+
-        if strat_active and strat_bonus:
-            conviction = min(conviction + 1, 7)
+        # Strat conviction boost:
+        #   bonus=2 (F2, FTFC, PMG) → jump straight to 7★ ELITE regardless of base
+        #   bonus=1 (combo only)    → +1 to base conviction, capped at 7
+        if strat_active:
+            if strat_bonus >= 2:
+                conviction = 7
+            elif strat_bonus == 1:
+                conviction = min(conviction + 1, 7)
 
         # GEX summary (whale override tag)
         if whale_override_active and not gex_result["supports"]:
