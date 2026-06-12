@@ -98,7 +98,15 @@ def render_setup_card(s: ConfluenceSetup) -> str:
     if strat_active and strat_summary:
         # FTFC score bar
         ftfc_score = strat_ftfc.score   if strat_ftfc else 0
-        ftfc_text  = strat_ftfc.summary if strat_ftfc else ""
+        # Only show FTFC text when it aligns with or is neutral to the trade direction
+        _ftfc_dir_map = {"BULL": "CALL", "BEAR": "PUT"}
+        _s_direction  = getattr(s, "direction", "")
+        if strat_ftfc and _ftfc_dir_map.get(strat_ftfc.ftfc_dir) == _s_direction:
+            ftfc_text = strat_ftfc.summary
+        elif strat_ftfc and not strat_ftfc.ftfc:
+            ftfc_text = strat_ftfc.summary   # mixed — show score
+        else:
+            ftfc_text = ""  # opposing FTFC — suppress
 
         score_bar = ""
         for i in range(3):
@@ -253,8 +261,8 @@ def render_setup_card(s: ConfluenceSetup) -> str:
           <div>
             <div style='font-size:0.68rem;color:{PALETTE["text_muted"]};
                         font-family:monospace;'>EXPIRY</div>
-            <div style='font-size:0.9rem;color:{PALETTE["text"]};
-                        font-weight:600;font-family:monospace;'>{s.expiry or "—"}</div>
+            <div style='font-size:0.9rem;color:{PALETTE["text"] if s.expiry else PALETTE["text_muted"]};
+                        font-weight:600;font-family:monospace;'>{s.expiry or "See chain"}</div>
           </div>
           <div>
             <div style='font-size:0.68rem;color:{PALETTE["text_muted"]};
