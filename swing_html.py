@@ -142,15 +142,33 @@ def render_setup_card(s: ConfluenceSetup) -> str:
         </div>
         """
 
-    # R/R color + label
-    if s.risk_reward >= 2.0:
-        rr_color, rr_label = PALETTE["green"], "✅ STRONG"
-    elif s.risk_reward >= 1.5:
-        rr_color, rr_label = PALETTE["green"], "✅ GOOD"
-    elif s.risk_reward >= 1.0:
-        rr_color, rr_label = PALETTE["gold"], "🟡 OK"
-    else:
-        rr_color, rr_label = PALETTE["red"], "⚠️ POOR"
+    # ── T1 / T2 targets and dual R/R ─────────────────────────────────────────
+    rr_t1 = getattr(s, "rr_t1", s.risk_reward)
+    rr_t2 = getattr(s, "rr_t2", 0.0)
+    t1    = getattr(s, "target_t1", s.target)
+    t2    = getattr(s, "target_t2", 0.0)
+
+    # If t2 wasn't set yet (old cached setup), approximate as T1 + 50%
+    if t2 == 0.0 and t1 > 0:
+        t2 = t1  # just show same value rather than crash
+
+    def _rr_color(rr):
+        if rr >= 2.0: return PALETTE["green"]
+        if rr >= 1.5: return PALETTE["green"]
+        if rr >= 1.0: return PALETTE["gold"]
+        return PALETTE["red"]
+
+    def _rr_label(rr):
+        if rr >= 2.0: return "✅ STRONG"
+        if rr >= 1.5: return "✅ GOOD"
+        if rr >= 1.0: return "🟡 OK"
+        return "⚠️ POOR"
+
+    rr_t1_color = _rr_color(rr_t1)
+    rr_t2_color = _rr_color(rr_t2)
+    # Keep legacy rr_color/rr_label for any old references
+    rr_color = rr_t1_color
+    rr_label = _rr_label(rr_t1)
 
     # Elite card gets a glowing left border
     border_style = (f"border-left:4px solid {conv_color};"
