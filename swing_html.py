@@ -56,8 +56,9 @@ CONVICTION_LABELS = {
 def render_setup_card(s: ConfluenceSetup) -> str:
     """Render one ConfluenceSetup as HTML."""
 
+    conviction    = getattr(s, "conviction", 4)
     stars, conv_label, conv_color = CONVICTION_LABELS.get(
-        s.conviction, ("⭐", "STANDARD", PALETTE["text_dim"])
+        conviction, ("⭐", "STANDARD", PALETTE["text_dim"])
     )
 
     dir_color = PALETTE["green"] if s.direction == "CALL" else PALETTE["red"]
@@ -74,7 +75,7 @@ def render_setup_card(s: ConfluenceSetup) -> str:
 
     # ELITE badge suffix
     elite_badge = ""
-    if s.conviction == 7:
+    if conviction == 7:
         elite_badge = " · ⚡ STRAT CONFIRMED"
 
     # Pattern list
@@ -91,10 +92,13 @@ def render_setup_card(s: ConfluenceSetup) -> str:
 
     # ── Strat section (only when active) ──────────────────────────────────
     strat_section = ""
-    if s.strat_active and s.strat_summary:
+    strat_active  = getattr(s, "strat_active",  False)
+    strat_summary = getattr(s, "strat_summary", "")
+    strat_ftfc    = getattr(s, "strat_ftfc",    None)
+    if strat_active and strat_summary:
         # FTFC score bar
-        ftfc_score = s.strat_ftfc.score if s.strat_ftfc else 0
-        ftfc_text  = s.strat_ftfc.summary if s.strat_ftfc else ""
+        ftfc_score = strat_ftfc.score   if strat_ftfc else 0
+        ftfc_text  = strat_ftfc.summary if strat_ftfc else ""
 
         score_bar = ""
         for i in range(3):
@@ -151,7 +155,7 @@ def render_setup_card(s: ConfluenceSetup) -> str:
     # Elite card gets a glowing left border
     border_style = (f"border-left:4px solid {conv_color};"
                     + ("box-shadow: -2px 0 12px rgba(255,159,10,0.25);"
-                       if s.conviction == 7 else ""))
+                       if conviction == 7 else ""))
 
     return _minify(f"""
     <div style='background:{PALETTE["card"]};border:1px solid {PALETTE["border"]};
@@ -184,7 +188,7 @@ def render_setup_card(s: ConfluenceSetup) -> str:
                   padding:12px 16px;margin-bottom:14px;'>
         <div style='font-family:monospace;font-size:0.7rem;color:{PALETTE["text_muted"]};
                     letter-spacing:0.1em;margin-bottom:8px;'>
-          {"⚡ 4-OF-4 ELITE CONFLUENCE" if s.conviction == 7 else "✅ 3-OF-3 CONFLUENCE"}
+          {"⚡ 4-OF-4 ELITE CONFLUENCE" if conviction == 7 else "✅ 3-OF-3 CONFLUENCE"}
           · {tf_badge}{elite_badge}
         </div>
 
@@ -314,7 +318,7 @@ def build_swing_report(setups: List[ConfluenceSetup],
         </div>
         """
     else:
-        elite_count  = sum(1 for s in setups if s.conviction == 7)
+        elite_count  = sum(1 for s in setups if conviction == 7)
         max_count    = sum(1 for s in setups if s.conviction == 6)
         high_count   = sum(1 for s in setups if s.conviction == 5)
         medium_count = sum(1 for s in setups if s.conviction == 4)
