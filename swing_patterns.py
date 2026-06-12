@@ -79,13 +79,14 @@ class StratResult:
     # TF bias: close > open on the most recent confirmed bar
     bias:         str  = ""     # "BULL", "BEAR", or "NEUTRAL"
 
-    # Strat-native price targets derived from the F2 bar structure
-    # F2D (bullish): f2_t1 = high of the failed 2D bar (first target),
-    #                f2_t2 = prior swing high beyond that (second target)
-    # F2U (bearish): f2_t1 = low of the failed 2U bar,
-    #                f2_t2 = prior swing low beyond that
+    # Strat-native price targets and stop derived from the F2 bar structure
+    # F2D (bullish): f2_t1 = body high of prev2 (first target),
+    #                f2_t2 = highest body high in 3 bars before prev2 (second target)
+    #                f2_stop = low of the 2D bar (natural invalidation)
+    # F2U (bearish): symmetric
     f2_t1:        Optional[float] = None
     f2_t2:        Optional[float] = None
+    f2_stop:      Optional[float] = None   # natural invalidation level
 
     # Human-readable summary
     summary:      str  = ""
@@ -238,7 +239,8 @@ class StratDetector:
                 # F2D (bullish): targets use BODY levels, not wicks.
                 # Wicks are liquidity grabs — body close/open is where price accepted.
                 #   T1 = body high of prev2 (max of open/close of bar before the 2D)
-                #   T2 = body high of the highest-body bar in the 3 bars before prev2
+                #   T2 = body high of the highest-body bar in 3 bars before prev2
+                #   stop = LOW of the 2D bar (prev[-2]) — natural invalidation
                 t1_candidate = round(max(float(prev2["Close"]), float(prev2["Open"])), 2)
                 if t1_candidate > c0:
                     result.f2_t1 = t1_candidate
@@ -251,11 +253,14 @@ class StratDetector:
                     t2_candidate = round(float(body_highs.max()), 2)
                     if t2_candidate > c0 and t2_candidate != t1_candidate:
                         result.f2_t2 = t2_candidate
+                # F2 stop: low of the 2D bar that failed
+                result.f2_stop = round(float(prev["Low"]), 2)
 
             if result.is_f2u and len(df) >= 5:
                 # F2U (bearish): body low of prev2, then lowest body low in prior 3 bars
                 #   T1 = body low of prev2 (min of open/close)
                 #   T2 = body low of the lowest-body bar in the 3 bars before prev2
+                #   stop = HIGH of the 2U bar (prev[-2]) — natural invalidation
                 t1_candidate = round(min(float(prev2["Close"]), float(prev2["Open"])), 2)
                 if t1_candidate < c0:
                     result.f2_t1 = t1_candidate
@@ -267,6 +272,8 @@ class StratDetector:
                     t2_candidate = round(float(body_lows.min()), 2)
                     if t2_candidate < c0 and t2_candidate != t1_candidate:
                         result.f2_t2 = t2_candidate
+                # F2 stop: high of the 2U bar that failed
+                result.f2_stop = round(float(prev["High"]), 2)
 
             # ── Combo detection ───────────────────────────────────────
             combo, combo_dir = cls._detect_combo(t0, t1, t2, c0, o0)

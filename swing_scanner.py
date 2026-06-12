@@ -560,6 +560,9 @@ def _evaluate_strat(
     if has_ftfc:
         signals.append(f"FTFC {ftfc.summary}")
         bonus = max(bonus, 1)
+    elif ftfc.score >= 2 and ftfc_dir_map.get(ftfc.ftfc_dir) == direction:
+        # 2/3 TFs aligned with direction — show but no bonus
+        signals.append(f"FTFC {ftfc.summary}")
 
     has_combo = False
     for strat, tf_label in [(strat_daily, "Daily"), (strat_4h, "4H")]:
@@ -1019,23 +1022,44 @@ class SwingScanner:
                 if f2_t1 and f2_t1 < spot: strat_targets.append(float(f2_t1))
                 if f2_t2 and f2_t2 < spot: strat_targets.append(float(f2_t2))
 
+        # ── F2 stop: use the 2D/2U bar's extreme as natural invalidation ──────────
+        # F2D CALL: stop = low of the 2D bar (if price goes back below it, F2 failed)
+        # F2U PUT:  stop = high of the 2U bar
+        # This is tighter and more structurally correct than an ATR-based stop,
+        # and fixes the chronic R/R < 1.0 problem caused by wide ATR stops vs
+        # nearby F2 body targets.
+        f2_stop_level = None
+        for _s in [strat_daily, strat_4h]:
+            if _s is None: continue
+            fs = getattr(_s, "f2_stop", None)
+            if direction == "CALL" and _s.is_f2d and fs and fs < spot:
+                f2_stop_level = float(fs)
+                break
+            elif direction == "PUT" and _s.is_f2u and fs and fs > spot:
+                f2_stop_level = float(fs)
+                break
+
         if direction == "CALL":
             entry = spot
-            below = [lv for lv in pattern_levels if lv < spot]
-            gsup  = gex_result.get("support")
-            if gsup and gsup < spot:
-                below.append(float(gsup))
-            struct   = max(below) if below else None
-            raw_stop = ((struct - STOP_LEVEL_BUFFER * atr_val) if struct is not None
-                        else (spot - 1.5 * atr_val))
-            risk   = min(max(spot - raw_stop, RISK_MIN_ATR * atr_val),
-                         RISK_MAX_ATR * atr_val)
-            stop   = spot - risk
+            if f2_stop_level is not None:
+                # F2D setup: stop just below the 2D bar's low
+                stop = f2_stop_level - STOP_LEVEL_BUFFER * atr_val * 0.5
+            else:
+                below = [lv for lv in pattern_levels if lv < spot]
+                gsup  = gex_result.get("support")
+                if gsup and gsup < spot:
+                    below.append(float(gsup))
+                struct   = max(below) if below else None
+                raw_stop = ((struct - STOP_LEVEL_BUFFER * atr_val) if struct is not None
+                            else (spot - 1.5 * atr_val))
+                risk   = min(max(spot - raw_stop, RISK_MIN_ATR * atr_val),
+                             RISK_MAX_ATR * atr_val)
+                stop   = spot - risk
 
             # Strat F2 targets: structurally validated — use any level above entry.
             # GEX/pattern levels still need min_dist to avoid trivially close targets.
             strat_ups = sorted(lv for lv in strat_targets if lv > entry)
-            max_t1 = entry + 3.0 * atr_val   # cap: T1 within 3x ATR for 1-3 day swing
+            max_t1 = entry + 3.0 * atr_val
             gex_ups   = sorted(
                 lv for lv in [gex_result.get("magnet"), gex_result.get("resistance")]
                 if lv and entry + min_dist < lv <= max_t1
@@ -1044,21 +1068,25 @@ class SwingScanner:
             target = ups[0] if ups else entry + ATR_TARGET_MULT * atr_val
         else:
             entry = spot
-            above = [lv for lv in pattern_levels if lv > spot]
-            gres  = gex_result.get("resistance")
-            if gres and gres > spot:
-                above.append(float(gres))
-            struct   = min(above) if above else None
-            raw_stop = ((struct + STOP_LEVEL_BUFFER * atr_val) if struct is not None
-                        else (spot + 1.5 * atr_val))
-            risk   = min(max(raw_stop - spot, RISK_MIN_ATR * atr_val),
-                         RISK_MAX_ATR * atr_val)
-            stop   = spot + risk
+            if f2_stop_level is not None:
+                # F2U setup: stop just above the 2U bar's high
+                stop = f2_stop_level + STOP_LEVEL_BUFFER * atr_val * 0.5
+            else:
+                above = [lv for lv in pattern_levels if lv > spot]
+                gres  = gex_result.get("resistance")
+                if gres and gres > spot:
+                    above.append(float(gres))
+                struct   = min(above) if above else None
+                raw_stop = ((struct + STOP_LEVEL_BUFFER * atr_val) if struct is not None
+                            else (spot + 1.5 * atr_val))
+                risk   = min(max(raw_stop - spot, RISK_MIN_ATR * atr_val),
+                             RISK_MAX_ATR * atr_val)
+                stop   = spot + risk
 
             strat_downs = sorted(
                 (lv for lv in strat_targets if lv < entry), reverse=True
             )
-            min_t1 = entry - 3.0 * atr_val   # cap: T1 within 3x ATR for 1-3 day swing
+            min_t1 = entry - 3.0 * atr_val
             gex_downs   = sorted(
                 (lv for lv in [gex_result.get("magnet"), gex_result.get("support")]
                  if lv and min_t1 <= lv < entry - min_dist),
@@ -1099,6 +1127,23 @@ class SwingScanner:
             t2 = further_downs[0] if further_downs else max(t1 - ATR_TARGET_MULT * atr_val, min_t2)
 
         t2 = float(t2)
+
+        risk  = abs(entry_above - stop_below)
+
+        # ── T1/T2 promotion: if T1 gives poor R/R but T2 is good, promote T2→T1 ──
+        # This fixes F2 setups where the body target is close to entry but the
+        # stop (F2 bar's low) is wide, leaving T1 R/R < 1.0.
+        # Promoting T2 to T1 gives a realistic reward target and preserves the setup.
+        if risk > 0:
+            rr_t1_check = abs(t1 - entry_above) / risk
+            rr_t2_check = abs(t2 - entry_above) / risk
+            if rr_t1_check < 1.0 and rr_t2_check >= 1.0:
+                # Promote: T1 = old T2, project new T2 one more ATR step out
+                t1 = t2
+                if direction == "CALL":
+                    t2 = min(t1 + ATR_TARGET_MULT * atr_val, entry + 5.0 * atr_val)
+                else:
+                    t2 = max(t1 - ATR_TARGET_MULT * atr_val, entry - 5.0 * atr_val)
 
         risk    = abs(entry_above - stop_below)
         rr_t1   = round(abs(t1 - entry_above) / risk, 2) if risk > 0 else 0
