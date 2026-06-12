@@ -79,6 +79,14 @@ class StratResult:
     # TF bias: close > open on the most recent confirmed bar
     bias:         str  = ""     # "BULL", "BEAR", or "NEUTRAL"
 
+    # Strat-native price targets derived from the F2 bar structure
+    # F2D (bullish): f2_t1 = high of the failed 2D bar (first target),
+    #                f2_t2 = prior swing high beyond that (second target)
+    # F2U (bearish): f2_t1 = low of the failed 2U bar,
+    #                f2_t2 = prior swing low beyond that
+    f2_t1:        Optional[float] = None
+    f2_t2:        Optional[float] = None
+
     # Human-readable summary
     summary:      str  = ""
 
@@ -208,11 +216,65 @@ class StratDetector:
             prev_high2 = float(prev2["High"])
             prev_low2  = float(prev2["Low"])
 
-            # F2 with a 0.2% buffer — close only needs to retrace meaningfully
-            # into the prior range, not necessarily past the exact high/low tick
-            f2_buffer = prev_high2 * 0.002
+            # F2 detection — mirrors Pine Script exactly:
+            #   isF2U: prev bar was 2U (broke prev_high), current close back BELOW high[2]
+            #          i.e. close < high of the bar BEFORE the 2U (prev2["High"])
+            #   isF2D: prev bar was 2D (broke prev_low), current close back ABOVE low[2]
+            #          i.e. close > low of the bar BEFORE the 2D (prev2["Low"])
+            # Note: prev2 here = df.iloc[-3], the bar before the directional break.
+            # A 0.2% buffer handles wicks that nearly-but-not-quite retrace.
+            f2_buffer = c0 * 0.002
             result.is_f2u = (t1 == "2U") and (c0 < prev_high2 + f2_buffer)
             result.is_f2d = (t1 == "2D") and (c0 > prev_low2  - f2_buffer)
+
+            # ── Strat-native F2 targets ───────────────────────────────────
+            # F2D (bull trap failed, expect up):
+            #   T1 = high of the bar BEFORE the 2D bar (the last up swing high)
+            #   T2 = highest high in the 10 bars preceding that
+            # F2U (bear trap failed, expect down):
+            #   T1 = low of the bar BEFORE the 2U bar (the last down swing low)
+            #   T2 = lowest low in the 10 bars preceding that
+            if result.is_f2d and len(df) >= 5:
+                # F2D (bullish): T1 = nearest swing high above price,
+                #                T2 = second nearest (not the blow-off top).
+                # Lookback: 5 bars before prev2 — one trading week on daily,
+                # keeps targets in near-term structure rather than old highs.
+                candidates = set()
+                candidates.add(float(prev2["High"]))
+                lookback_start = max(0, len(df) - 8)   # 5 bars before prev2
+                lookback_end   = len(df) - 3
+                if lookback_end > lookback_start:
+                    window = df.iloc[lookback_start:lookback_end]
+                    for idx in range(len(window)):
+                        h = float(window.iloc[idx]["High"])
+                        if h > c0:
+                            candidates.add(round(h, 2))
+                # Sort ascending — nearest first, second-nearest as T2
+                sorted_highs = sorted(lv for lv in candidates if lv > c0)
+                if len(sorted_highs) >= 1:
+                    result.f2_t1 = sorted_highs[0]    # nearest resistance
+                if len(sorted_highs) >= 2:
+                    result.f2_t2 = sorted_highs[1]    # second nearest (not blow-off)
+
+            if result.is_f2u and len(df) >= 5:
+                # F2U (bearish): T1 = nearest swing low below price,
+                #                T2 = second nearest low.
+                candidates = set()
+                candidates.add(float(prev2["Low"]))
+                lookback_start = max(0, len(df) - 8)
+                lookback_end   = len(df) - 3
+                if lookback_end > lookback_start:
+                    window = df.iloc[lookback_start:lookback_end]
+                    for idx in range(len(window)):
+                        l = float(window.iloc[idx]["Low"])
+                        if l < c0:
+                            candidates.add(round(l, 2))
+                # Sort descending — nearest first, second-nearest as T2
+                sorted_lows = sorted((lv for lv in candidates if lv < c0), reverse=True)
+                if len(sorted_lows) >= 1:
+                    result.f2_t1 = sorted_lows[0]    # nearest support
+                if len(sorted_lows) >= 2:
+                    result.f2_t2 = sorted_lows[1]    # second nearest
 
             # ── Combo detection ───────────────────────────────────────
             combo, combo_dir = cls._detect_combo(t0, t1, t2, c0, o0)
