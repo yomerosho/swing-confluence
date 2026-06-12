@@ -70,10 +70,9 @@ TARGET_MIN_ATR     = 1.00
 ATR_TARGET_MULT    = 1.50
 MAX_LEVEL_DIST_PCT = 0.25
 
-# Strat combo/signal names that are strong enough to count as
-# "directional agreement" and boost conviction.
-STRAT_BULLISH_COMBOS = {"2-1-2", "1-2-2", "3-2-2", "3-1-2", "2-2"}
-STRAT_BEARISH_COMBOS = {"2-1-2", "1-2-2", "3-2-2", "3-1-2", "2-2"}
+# Minimum conviction to surface a setup.
+# 4★ (4H-only patterns, no Strat boost) is filtered out — not tradeable.
+MIN_CONVICTION = 5
 
 
 # ── Confluence Setup Output ───────────────────────────────────────────────────
@@ -846,6 +845,11 @@ class SwingScanner:
         plan = self._build_trade_plan(
             spot, direction, patterns, gex_result, chain, atr
         )
+
+        # Drop 4★ setups — 4H-only with no Strat signal, not worth trading
+        if conviction < MIN_CONVICTION:
+            logger.info(f"{ticker} {direction} filtered: conviction {conviction}★ < {MIN_CONVICTION}★")
+            return None
 
         if plan["risk_reward"] < MIN_RISK_REWARD:
             logger.info(

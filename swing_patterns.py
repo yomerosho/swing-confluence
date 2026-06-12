@@ -151,7 +151,7 @@ class StratDetector:
       6+ consecutive bars that are all 2U or 2D (any directional 2-bar)
     """
 
-    PMG_MIN = 6  # consecutive 2-bars to qualify as PMG
+    PMG_MIN = 5  # consecutive 2-bars to qualify as PMG (daily/4H realistic threshold)
 
     @staticmethod
     def _bar_type(df: pd.DataFrame, i: int) -> str:
@@ -167,15 +167,15 @@ class StratDetector:
         h, l   = float(row["High"]),  float(row["Low"])
         ph, pl = float(prev["High"]), float(prev["Low"])
 
-        if h < ph and l > pl:
-            return "1"
+        if h > ph and l < pl:
+            return "3"            # outside first — most restrictive
         elif h > ph and l >= pl:
             return "2U"
         elif l < pl and h <= ph:
             return "2D"
-        elif h > ph and l < pl:
-            return "3"
-        return "1"  # flat / equal treated as inside
+        elif h <= ph and l >= pl:
+            return "1"            # true inside bar (includes equal highs/lows)
+        return "1"                # fallback
 
     @classmethod
     def analyze(cls, df: pd.DataFrame, timeframe: str) -> StratResult:
@@ -208,8 +208,11 @@ class StratDetector:
             prev_high2 = float(prev2["High"])
             prev_low2  = float(prev2["Low"])
 
-            result.is_f2u = (t1 == "2U") and (c0 < prev_high2)
-            result.is_f2d = (t1 == "2D") and (c0 > prev_low2)
+            # F2 with a 0.2% buffer — close only needs to retrace meaningfully
+            # into the prior range, not necessarily past the exact high/low tick
+            f2_buffer = prev_high2 * 0.002
+            result.is_f2u = (t1 == "2U") and (c0 < prev_high2 + f2_buffer)
+            result.is_f2d = (t1 == "2D") and (c0 > prev_low2  - f2_buffer)
 
             # ── Combo detection ───────────────────────────────────────
             combo, combo_dir = cls._detect_combo(t0, t1, t2, c0, o0)
