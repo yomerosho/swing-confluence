@@ -60,7 +60,8 @@ WHALE_THRESHOLD        = 500_000
 WHALE_OVERRIDE         = 5_000_000
 MIN_OI_THRESHOLD       = 500
 PREFERRED_OI_THRESHOLD = 1000
-MIN_RISK_REWARD        = 1.0
+MIN_RISK_REWARD        = 0.9   # floor for 5★/6★ setups
+MIN_RISK_REWARD_ELITE  = 0.75  # floor for 7★ ELITE (4-of-4 confluence)
 
 ATR_FALLBACK_PCT   = 0.015
 STOP_LEVEL_BUFFER  = 0.30
@@ -762,17 +763,6 @@ class SwingScanner:
                            if not df_4h.empty else StratResult("4H"))
             ftfc        = StratDetector.compute_ftfc(None, df_4h, df_daily)
 
-            # DEBUG — log Strat state for every ticker so we can see why F2 doesn't fire
-            logger.info(
-                f"{ticker} STRAT 1D: types={strat_daily.bar_types} "
-                f"f2d={strat_daily.is_f2d} f2u={strat_daily.is_f2u} "
-                f"combo={strat_daily.combo}/{strat_daily.combo_dir} "
-                f"f2_t1={strat_daily.f2_t1} f2_t2={strat_daily.f2_t2} | "
-                f"4H: types={strat_4h.bar_types} "
-                f"f2d={strat_4h.is_f2d} f2u={strat_4h.is_f2u} "
-                f"combo={strat_4h.combo}/{strat_4h.combo_dir} | "
-                f"FTFC: {ftfc.summary}"
-            )
 
             calls = [p for p in all_patterns if p.direction == "CALL"]
             puts  = [p for p in all_patterns if p.direction == "PUT"]
@@ -873,9 +863,11 @@ class SwingScanner:
             logger.info(f"{ticker} {direction} filtered: conviction {conviction}★ < {MIN_CONVICTION}★")
             return None
 
-        if plan["risk_reward"] < MIN_RISK_REWARD:
+        rr_floor = MIN_RISK_REWARD_ELITE if conviction == 7 else MIN_RISK_REWARD
+        if plan["risk_reward"] < rr_floor:
             logger.info(
-                f"{ticker} {direction} rejected: R/R {plan['risk_reward']} < {MIN_RISK_REWARD}"
+                f"{ticker} {direction} rejected: R/R {plan['risk_reward']} < {rr_floor} "
+                f"(conviction {conviction}★)"
             )
             return None
 
