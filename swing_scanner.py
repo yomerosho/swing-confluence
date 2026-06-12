@@ -7,7 +7,7 @@ Combines:
   • Whale flow ($500K+ trades, last 2-3 days)
   • The Strat (candle sequences, combos, F2, PMG, 3-TF FTFC)
 
-Output: Only 3-of-3 confluence setups for 1-3 day swings.
+Output: 3-of-3 confluence setups for 1-3 day swings. 4-of-4 ELITE when Strat aligns.
 Strat alignment boosts conviction to 7★ ELITE.
 """
 
@@ -79,7 +79,7 @@ MIN_CONVICTION = 5
 
 @dataclass
 class ConfluenceSetup:
-    """A 3-of-3 swing setup ready to email."""
+    """A 3-of-3 (or 4-of-4 ELITE) swing setup ready to email."""
     ticker:           str
     direction:        str           # "CALL" or "PUT"
     conviction:       int           # 4, 5, 6, or 7 stars
@@ -1003,14 +1003,15 @@ class SwingScanner:
             risk   = min(max(spot - raw_stop, RISK_MIN_ATR * atr_val),
                          RISK_MAX_ATR * atr_val)
             stop   = spot - risk
-            # Strat F2 targets take priority; GEX levels fill in when no F2 target
-            ups    = sorted(
-                lv for lv in (
-                    strat_targets
-                    + [gex_result.get("magnet"), gex_result.get("resistance")]
-                )
+
+            # Strat F2 targets: structurally validated — use any level above entry.
+            # GEX/pattern levels still need min_dist to avoid trivially close targets.
+            strat_ups = sorted(lv for lv in strat_targets if lv > entry)
+            gex_ups   = sorted(
+                lv for lv in [gex_result.get("magnet"), gex_result.get("resistance")]
                 if lv and lv > entry + min_dist
             )
+            ups    = strat_ups if strat_ups else gex_ups
             target = ups[0] if ups else entry + ATR_TARGET_MULT * atr_val
         else:
             entry = spot
@@ -1024,14 +1025,16 @@ class SwingScanner:
             risk   = min(max(raw_stop - spot, RISK_MIN_ATR * atr_val),
                          RISK_MAX_ATR * atr_val)
             stop   = spot + risk
-            downs  = sorted(
-                (lv for lv in (
-                    strat_targets
-                    + [gex_result.get("magnet"), gex_result.get("support")]
-                )
-                if lv and lv < entry - min_dist),
+
+            strat_downs = sorted(
+                (lv for lv in strat_targets if lv < entry), reverse=True
+            )
+            gex_downs   = sorted(
+                (lv for lv in [gex_result.get("magnet"), gex_result.get("support")]
+                 if lv and lv < entry - min_dist),
                 reverse=True,
             )
+            downs  = strat_downs if strat_downs else gex_downs
             target = downs[0] if downs else entry - ATR_TARGET_MULT * atr_val
 
         entry_above = float(entry)
@@ -1042,23 +1045,24 @@ class SwingScanner:
         # For F2 setups: already have f2_t2 in strat_targets if it cleared T1.
         # General case: project 2.0× ATR beyond T1 (gives a runner target).
         if direction == "CALL":
-            further_ups = sorted(
-                lv for lv in (
-                    strat_targets
-                    + [gex_result.get("magnet"), gex_result.get("resistance")]
-                )
-                if lv and lv > t1 + atr_val * 0.5   # must be meaningfully beyond T1
+            # T2: next Strat level beyond T1, or next GEX level, or ATR projection
+            further_strat = sorted(lv for lv in strat_targets if lv > t1)
+            further_gex   = sorted(
+                lv for lv in [gex_result.get("magnet"), gex_result.get("resistance")]
+                if lv and lv > t1 + atr_val * 0.5
             )
+            further_ups = further_strat if further_strat else further_gex
             t2 = further_ups[0] if further_ups else t1 + ATR_TARGET_MULT * atr_val
         else:
-            further_downs = sorted(
-                (lv for lv in (
-                    strat_targets
-                    + [gex_result.get("magnet"), gex_result.get("support")]
-                )
-                if lv and lv < t1 - atr_val * 0.5),
+            further_strat = sorted(
+                (lv for lv in strat_targets if lv < t1), reverse=True
+            )
+            further_gex   = sorted(
+                (lv for lv in [gex_result.get("magnet"), gex_result.get("support")]
+                 if lv and lv < t1 - atr_val * 0.5),
                 reverse=True,
             )
+            further_downs = further_strat if further_strat else further_gex
             t2 = further_downs[0] if further_downs else t1 - ATR_TARGET_MULT * atr_val
 
         t2 = float(t2)
