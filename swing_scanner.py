@@ -5,8 +5,10 @@ Combines:
   • Technical patterns (10 types, Daily + 4H)
   • GEX positioning (Alpaca real-time)
   • Whale flow ($500K+ trades, last 2-3 days)
+  • The Strat (candle sequences, combos, F2, PMG, 3-TF FTFC)
 
 Output: Only 3-of-3 confluence setups for 1-3 day swings.
+Strat alignment boosts conviction to 7★ ELITE.
 """
 
 import os
@@ -19,7 +21,10 @@ from datetime import datetime, timedelta
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional
 
-from swing_patterns import PatternDetector, PatternSignal, Indicators
+from swing_patterns import (
+    PatternDetector, PatternSignal, Indicators,
+    StratDetector, StratResult, StratFTFC,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -30,7 +35,6 @@ INDICES_ETFS = ["SPY", "QQQ", "IWM"]
 
 MEGA_CAPS    = ["AAPL", "MSFT", "NVDA", "META", "GOOGL", "AMZN", "TSLA"]
 
-# Focused daily list — top single-name options liquidity
 CORE_20 = [
     "MSTR", "AMD", "PLTR", "COIN", "AVGO",
     "NFLX", "MU", "INTC", "BAC", "UBER",
@@ -38,46 +42,38 @@ CORE_20 = [
     "QCOM", "DIS", "C", "ABNB", "AMAT",
 ]
 
-# Bench — liquid, but watch only when there's a setup/catalyst
 BENCH = [
-    # Semis & Hardware
     "ARM", "LRCX", "TSM", "KLAC", "ON",
-    # Software & Cloud
     "ADBE", "CRM", "ORCL", "SHOP", "SNOW", "ZS", "PANW",
-    # Financials
     "GS", "JPM", "PYPL", "V", "MS", "WFC", "SCHW",
-    # Healthcare
     "ISRG", "UNH",
-    # Energy & Industrials
     "CAT", "CVX", "DE", "FSLR", "GE", "OXY", "XOM",
-    # Consumer & Internet
     "BABA", "JD", "PINS", "RBLX", "RDDT", "WMT", "DKNG", "SBUX", "NKE", "GM",
-    # Speculative / High-Beta
     "HIMS", "LMND", "OKLO", "RKLB", "AFRM",
 ]
 
-SWING_NAMES = CORE_20 + BENCH   # full universe = 60 names
+SWING_NAMES = CORE_20 + BENCH
 
 ALL_TICKERS = INDICES_ETFS + MEGA_CAPS + SWING_NAMES
 
-WHALE_THRESHOLD       = 500_000
-WHALE_OVERRIDE        = 5_000_000   # $5M+ in directional whale flow → bypass GEX
-MIN_OI_THRESHOLD      = 500       # minimum OI for a tradeable strike
-PREFERRED_OI_THRESHOLD = 1000     # preferred OI for full-confidence pick
-MIN_RISK_REWARD       = 1.0       # reject setups with R/R below 1:1
+WHALE_THRESHOLD        = 500_000
+WHALE_OVERRIDE         = 5_000_000
+MIN_OI_THRESHOLD       = 500
+PREFERRED_OI_THRESHOLD = 1000
+MIN_RISK_REWARD        = 1.0
 
-# Trade-plan geometry (volatility-aware). Entry is the LIVE SPOT — the signal
-# has already fired, so we enter the move that is underway rather than pinning a
-# limit to a stale pattern level (the old model produced un-fillable entries far
-# from price and fantasy R/R). Structure becomes the STOP, sized in ATR so the
-# risk leg can't be faked tight or blown out wide.
-ATR_FALLBACK_PCT      = 0.015     # if ATR unavailable, assume 1.5% of spot
-STOP_LEVEL_BUFFER     = 0.30      # place stop 0.30·ATR beyond the structural level
-RISK_MIN_ATR          = 0.60      # floor the risk leg (kills fake-tight 1:7 R/R)
-RISK_MAX_ATR          = 2.50      # cap the risk leg (swing stop, not a position trade)
-TARGET_MIN_ATR        = 1.00      # a target must be ≥1·ATR away or step to the next level
-ATR_TARGET_MULT       = 1.50      # projected target when no level is far enough out
-MAX_LEVEL_DIST_PCT    = 0.25      # drop patterns whose level is >25% from spot (bad data)
+ATR_FALLBACK_PCT   = 0.015
+STOP_LEVEL_BUFFER  = 0.30
+RISK_MIN_ATR       = 0.60
+RISK_MAX_ATR       = 2.50
+TARGET_MIN_ATR     = 1.00
+ATR_TARGET_MULT    = 1.50
+MAX_LEVEL_DIST_PCT = 0.25
+
+# Strat combo/signal names that are strong enough to count as
+# "directional agreement" and boost conviction.
+STRAT_BULLISH_COMBOS = {"2-1-2", "1-2-2", "3-2-2", "3-1-2", "2-2"}
+STRAT_BEARISH_COMBOS = {"2-1-2", "1-2-2", "3-2-2", "3-1-2", "2-2"}
 
 
 # ── Confluence Setup Output ───────────────────────────────────────────────────
@@ -87,10 +83,10 @@ class ConfluenceSetup:
     """A 3-of-3 swing setup ready to email."""
     ticker:           str
     direction:        str           # "CALL" or "PUT"
-    conviction:       int           # 4, 5, or 6 stars
+    conviction:       int           # 4, 5, 6, or 7 stars
     spot:             float
 
-    # Factor 1: Technical
+    # Factor 1: Technical (ICT/SMC)
     patterns:         List[PatternSignal] = field(default_factory=list)
     has_daily:        bool = False
     has_4h:           bool = False
@@ -105,6 +101,13 @@ class ConfluenceSetup:
     whale_summary:    str = ""
     whale_count:      int = 0
     whale_premium:    float = 0
+
+    # Factor 4: The Strat (optional enhancer)
+    strat_daily:      Optional[StratResult] = None
+    strat_4h:         Optional[StratResult] = None
+    strat_ftfc:       Optional[StratFTFC]   = None
+    strat_active:     bool  = False   # True when Strat boosts conviction
+    strat_summary:    str   = ""      # human-readable Strat summary for the card
 
     # Trade plan
     strike:           float = 0
@@ -121,9 +124,7 @@ class ConfluenceSetup:
 # ── Alpaca Client ─────────────────────────────────────────────────────────────
 
 class AlpacaClient:
-    """Alpaca REST client for options + bars."""
-
-    DATA_URL    = "https://data.alpaca.markets"
+    DATA_URL = "https://data.alpaca.markets"
 
     def __init__(self, key=None, secret=None):
         self.key    = key    or os.environ.get("ALPACA_KEY", "")
@@ -137,29 +138,20 @@ class AlpacaClient:
         }
 
     def get_spot(self, ticker: str, verbose: bool = False) -> float:
-        """
-        Get latest spot price. Tries SIP first (full tape), falls back to IEX.
-        Returns 0 if both fail.
-        """
         for feed in ["sip", "iex"]:
             try:
                 url = f"{self.DATA_URL}/v2/stocks/{ticker}/quotes/latest"
-                params = {"feed": feed}
-                r = requests.get(url, headers=self._headers(), params=params, timeout=10)
-
+                r   = requests.get(url, headers=self._headers(),
+                                   params={"feed": feed}, timeout=10)
                 if r.status_code == 403:
-                    if verbose: logger.info(f"{ticker} spot feed={feed}: 403 no access")
                     continue
                 if r.status_code != 200:
-                    if verbose: logger.warning(f"{ticker} spot feed={feed}: {r.status_code} {r.text[:200]}")
                     continue
 
                 q = r.json().get("quote", {})
                 bid, ask = q.get("bp", 0) or 0, q.get("ap", 0) or 0
 
-                # Sanity check — reject if both are 0 or if spread is absurd (>30%)
                 if bid == 0 and ask == 0:
-                    if verbose: logger.warning(f"{ticker} spot feed={feed}: both bid/ask are 0")
                     continue
 
                 mid = (bid + ask) / 2 if (bid > 0 and ask > 0) else (ask or bid)
@@ -167,37 +159,29 @@ class AlpacaClient:
                 if bid > 0 and ask > 0:
                     spread_pct = (ask - bid) / mid * 100
                     if spread_pct > 30:
-                        if verbose: logger.warning(f"{ticker} spot feed={feed}: spread {spread_pct:.1f}% too wide, skipping")
                         continue
 
-                if verbose: logger.info(f"{ticker} spot feed={feed}: ${mid:.2f} (bid={bid}, ask={ask})")
                 return mid
 
-            except Exception as e:
-                if verbose: logger.error(f"{ticker} spot feed={feed} exception: {e}")
+            except Exception:
+                pass
 
-        # Last resort: try latest trade
         for feed in ["sip", "iex"]:
             try:
                 url = f"{self.DATA_URL}/v2/stocks/{ticker}/trades/latest"
-                params = {"feed": feed}
-                r = requests.get(url, headers=self._headers(), params=params, timeout=10)
+                r   = requests.get(url, headers=self._headers(),
+                                   params={"feed": feed}, timeout=10)
                 if r.status_code == 200:
                     p = r.json().get("trade", {}).get("p", 0)
                     if p and p > 0:
-                        if verbose: logger.info(f"{ticker} spot trade fallback feed={feed}: ${p:.2f}")
                         return p
-            except: pass
+            except:
+                pass
 
         return 0
 
-    def get_bars(self, ticker: str, timeframe: str = "1Day", days: int = 250) -> pd.DataFrame:
-        """
-        Get OHLC bars from Alpaca.
-        timeframe: "1Day", "4Hour", "1Hour", etc.
-        Uses 'sip' feed (full consolidated tape) — requires real-time subscription.
-        Falls back to 'iex' if sip access denied.
-        """
+    def get_bars(self, ticker: str, timeframe: str = "1Day",
+                 days: int = 250) -> pd.DataFrame:
         for feed in ["sip", "iex"]:
             try:
                 end   = datetime.now()
@@ -211,26 +195,21 @@ class AlpacaClient:
                     "limit":      10000,
                     "adjustment": "raw",
                     "feed":       feed,
-                    "sort":       "asc",   # oldest→newest so iloc[-1] is the latest bar
+                    "sort":       "asc",
                 }
 
-                # Paginate: Alpaca returns a next_page_token when results span
-                # multiple pages. Dropping it (the old bug) left us with only the
-                # OLDEST page, so iloc[-1] was a stale bar hundreds of points from
-                # spot — which is what produced the bogus 4H levels.
                 all_bars, page_token, feed_ok = [], None, True
-                for _ in range(25):  # hard cap on pages
+                for _ in range(25):
                     params = dict(base_params)
                     if page_token:
                         params["page_token"] = page_token
-                    r = requests.get(url, headers=self._headers(), params=params, timeout=20)
+                    r = requests.get(url, headers=self._headers(),
+                                     params=params, timeout=20)
 
                     if r.status_code == 403:
-                        logger.debug(f"{ticker} {timeframe} feed={feed}: 403, falling back")
                         feed_ok = False
                         break
                     if r.status_code != 200:
-                        logger.warning(f"{ticker} {timeframe} feed={feed} bars {r.status_code}: {r.text[:200]}")
                         feed_ok = False
                         break
 
@@ -240,10 +219,7 @@ class AlpacaClient:
                     if not page_token:
                         break
 
-                if not feed_ok:
-                    continue
-                if not all_bars:
-                    logger.debug(f"{ticker} {timeframe} feed={feed}: 0 bars returned")
+                if not feed_ok or not all_bars:
                     continue
 
                 df = pd.DataFrame(all_bars)
@@ -251,8 +227,6 @@ class AlpacaClient:
                 df.set_index("t", inplace=True)
                 df.rename(columns={"o": "Open", "h": "High", "l": "Low",
                                    "c": "Close", "v": "Volume"}, inplace=True)
-                # Guarantee chronological order + de-dupe page seams so iloc[-1]
-                # is unambiguously the most recent bar.
                 df = df[~df.index.duplicated(keep="last")].sort_index()
                 logger.info(f"{ticker} {timeframe} feed={feed}: {len(df)} bars "
                             f"(last {df.index[-1].date()})")
@@ -264,11 +238,6 @@ class AlpacaClient:
         return pd.DataFrame()
 
     def get_open_interest(self, ticker: str) -> dict:
-        """
-        Fetch Open Interest for all active option contracts.
-        Returns: {option_symbol: open_interest_int}
-        Uses the contracts endpoint which provides current OI.
-        """
         oi_map = {}
         try:
             url = "https://paper-api.alpaca.markets/v2/options/contracts"
@@ -282,9 +251,9 @@ class AlpacaClient:
 
             while pages < 10:
                 if page_token: params["page_token"] = page_token
-                r = requests.get(url, headers=self._headers(), params=params, timeout=15)
+                r = requests.get(url, headers=self._headers(),
+                                 params=params, timeout=15)
                 if r.status_code != 200:
-                    logger.debug(f"{ticker} OI {r.status_code}")
                     break
 
                 data = r.json()
@@ -304,25 +273,25 @@ class AlpacaClient:
         return oi_map
 
     def get_options_chain(self, ticker: str, days_out: int = 14) -> pd.DataFrame:
-        """Fetch options chain with Greeks AND open interest."""
         try:
-            today   = datetime.now().date()
-            end_dt  = today + timedelta(days=days_out)
-            url     = f"{self.DATA_URL}/v1beta1/options/snapshots/{ticker}"
-            params  = {
+            today  = datetime.now().date()
+            end_dt = today + timedelta(days=days_out)
+            url    = f"{self.DATA_URL}/v1beta1/options/snapshots/{ticker}"
+            params = {
                 "limit": 1000,
                 "feed":  "indicative",
                 "expiration_date_gte": today.isoformat(),
                 "expiration_date_lte": end_dt.isoformat(),
             }
 
-            all_rows  = []
+            all_rows   = []
             page_token = None
             pages      = 0
 
             while pages < 5:
                 if page_token: params["page_token"] = page_token
-                r = requests.get(url, headers=self._headers(), params=params, timeout=20)
+                r = requests.get(url, headers=self._headers(),
+                                 params=params, timeout=20)
                 if r.status_code != 200: break
 
                 data = r.json()
@@ -330,25 +299,20 @@ class AlpacaClient:
                     parsed = self._parse_option_symbol(symbol)
                     if not parsed: continue
 
-                    q       = snap.get("latestQuote") or {}
-                    t       = snap.get("latestTrade") or {}
-                    g       = snap.get("greeks") or {}
-                    iv      = snap.get("impliedVolatility") or 0
-                    daily   = snap.get("dailyBar") or {}
-                    prev    = snap.get("prevDailyBar") or {}
-                    minute  = snap.get("minuteBar") or {}
+                    q      = snap.get("latestQuote") or {}
+                    t      = snap.get("latestTrade") or {}
+                    g      = snap.get("greeks") or {}
+                    daily  = snap.get("dailyBar") or {}
+                    prev   = snap.get("prevDailyBar") or {}
 
                     bid, ask = q.get("bp", 0) or 0, q.get("ap", 0) or 0
                     mid = (bid + ask) / 2 if bid and ask else 0
 
-                    # Volume: prefer today's daily bar, fall back to prev day, then latest trade size
                     day_vol  = daily.get("v", 0) or 0
                     prev_vol = prev.get("v", 0) or 0
                     last_sz  = t.get("s", 0) or 0
                     volume   = day_vol if day_vol > 0 else (prev_vol if prev_vol > 0 else last_sz)
-
-                    # For VWAP-style premium estimate, use daily bar's vw (volume-weighted average) if present
-                    vwap = daily.get("vw", 0) or mid
+                    vwap     = daily.get("vw", 0) or mid
 
                     all_rows.append({
                         "symbol":      symbol,
@@ -363,8 +327,8 @@ class AlpacaClient:
                         "prev_volume": prev_vol,
                         "gamma":       g.get("gamma", 0),
                         "delta":       g.get("delta", 0),
-                        "iv":          iv,
-                        "open_interest": 0,  # filled in below
+                        "iv":          snap.get("impliedVolatility") or 0,
+                        "open_interest": 0,
                     })
 
                 page_token = data.get("next_page_token")
@@ -377,16 +341,15 @@ class AlpacaClient:
 
             df = pd.DataFrame(all_rows)
 
-            # Enrich with OI
             oi_map = self.get_open_interest(ticker)
             if oi_map:
                 df["open_interest"] = df["symbol"].map(oi_map).fillna(0).astype(int)
 
-            # Spread metrics for liquidity scoring
             df["spread"]     = df["ask"] - df["bid"]
-            df["spread_pct"] = np.where(df["mid"] > 0, df["spread"] / df["mid"] * 100, 999)
-
+            df["spread_pct"] = np.where(df["mid"] > 0,
+                                        df["spread"] / df["mid"] * 100, 999)
             return df
+
         except Exception as e:
             logger.error(f"{ticker} chain: {e}")
             return pd.DataFrame()
@@ -411,29 +374,15 @@ class AlpacaClient:
 # ── GEX Analyzer ──────────────────────────────────────────────────────────────
 
 class GEXAnalyzer:
-    """
-    Analyzes whether dealer positioning supports a directional trade.
-    Returns confluence verdict (supports/neutral/opposes) + level info.
-    """
 
     def analyze(self, chain: pd.DataFrame, spot: float, direction: str) -> dict:
-        """
-        direction: "CALL" or "PUT"
-        Returns: {
-          "supports":  bool,         # True if GEX supports the trade
-          "summary":   str,          # Plain-English explanation
-          "magnet":    float,        # Nearest magnetic level
-          "support":   float,        # Key GEX support
-          "resistance": float,        # Key GEX resistance
-        }
-        """
         if chain.empty:
-            return {"supports": False, "summary": "No options data", "magnet": None, "support": None, "resistance": None}
+            return {"supports": False, "summary": "No options data",
+                    "magnet": None, "support": None, "resistance": None}
 
         df = chain.copy()
         df["volume"] = df["volume"].fillna(0)
 
-        # GEX per strike (using gamma × volume as proxy when no OI)
         df["gex"] = np.where(
             df["option_type"] == "call",
              df["gamma"].abs() * df["volume"] * 100 * spot**2 * 0.01,
@@ -446,50 +395,48 @@ class GEXAnalyzer:
         ).reset_index().sort_values("strike")
 
         if by_strike.empty:
-            return {"supports": False, "summary": "Empty GEX", "magnet": None, "support": None, "resistance": None}
+            return {"supports": False, "summary": "Empty GEX",
+                    "magnet": None, "support": None, "resistance": None}
 
-        # Find nearby support (highest pos GEX below) and resistance (highest pos GEX above)
         below = by_strike[by_strike["strike"] < spot]
         above = by_strike[by_strike["strike"] > spot]
 
         support    = float(below.nlargest(1, "net_gex")["strike"].iloc[0]) if not below.empty else None
         resistance = float(above.nlargest(1, "net_gex")["strike"].iloc[0]) if not above.empty else None
 
-        # Magnetic level: highest gamma × vol weighted by proximity
         df["dist_pct"] = abs(df["strike"] - spot) / spot
-        df["magnet_score"] = df["gamma"].abs() * df["volume"].clip(lower=1) * np.exp(-df["dist_pct"] * 5)
-        magnet_row = df.groupby("strike")["magnet_score"].sum().sort_values(ascending=False).head(1)
+        df["magnet_score"] = (df["gamma"].abs() * df["volume"].clip(lower=1)
+                              * np.exp(-df["dist_pct"] * 5))
+        magnet_row = (df.groupby("strike")["magnet_score"]
+                      .sum().sort_values(ascending=False).head(1))
         magnet = float(magnet_row.index[0]) if not magnet_row.empty else None
 
-        # Confluence verdict — OR logic (either structural support OR magnet pull qualifies)
         if direction == "CALL":
             has_support_below = support is not None and spot > support
-            has_magnet_above  = magnet is not None and magnet > spot
-
+            has_magnet_above  = magnet  is not None and magnet > spot
             supports = has_support_below or has_magnet_above
 
             if has_support_below and has_magnet_above:
                 summary = f"GEX support ${support:.2f} below + magnet ${magnet:.2f} above (strong)"
             elif has_support_below:
-                summary = f"GEX support ${support:.2f} below (magnet ${magnet:.2f} unfavorable)" if magnet else f"GEX support ${support:.2f} below"
+                summary = f"GEX support ${support:.2f} below"
             elif has_magnet_above:
-                summary = f"Magnet pulling toward ${magnet:.2f} above (no clear GEX floor)"
+                summary = f"Magnet pulling toward ${magnet:.2f} above"
             else:
-                summary = f"GEX positioning unfavorable for bullish (support: {support}, magnet: {magnet})"
-        else:  # PUT
+                summary = f"GEX positioning unfavorable for bullish"
+        else:
             has_resistance_above = resistance is not None and spot < resistance
-            has_magnet_below     = magnet is not None and magnet < spot
-
+            has_magnet_below     = magnet     is not None and magnet < spot
             supports = has_resistance_above or has_magnet_below
 
             if has_resistance_above and has_magnet_below:
                 summary = f"GEX resistance ${resistance:.2f} above + magnet ${magnet:.2f} below (strong)"
             elif has_resistance_above:
-                summary = f"GEX resistance ${resistance:.2f} above (magnet ${magnet:.2f} unfavorable)" if magnet else f"GEX resistance ${resistance:.2f} above"
+                summary = f"GEX resistance ${resistance:.2f} above"
             elif has_magnet_below:
-                summary = f"Magnet pulling toward ${magnet:.2f} below (no clear GEX ceiling)"
+                summary = f"Magnet pulling toward ${magnet:.2f} below"
             else:
-                summary = f"GEX positioning unfavorable for bearish (resistance: {resistance}, magnet: {magnet})"
+                summary = f"GEX positioning unfavorable for bearish"
 
         return {
             "supports":   supports,
@@ -503,38 +450,23 @@ class GEXAnalyzer:
 # ── Whale Flow Analyzer ───────────────────────────────────────────────────────
 
 class WhaleAnalyzer:
-    """
-    Checks for $500K+ whale flow in the direction of the trade.
-    Looks at current chain (today's volume + premium).
-    """
 
     def analyze(self, chain: pd.DataFrame, spot: float, direction: str,
                 threshold: float = WHALE_THRESHOLD) -> dict:
-        """
-        Returns: {
-          "supports":  bool,
-          "summary":   str,
-          "count":     int,
-          "premium":   float,  # total whale premium in direction
-        }
-        """
         if chain.empty:
-            return {"supports": False, "summary": "No flow data", "count": 0, "premium": 0}
+            return {"supports": False, "summary": "No flow data",
+                    "count": 0, "premium": 0}
 
         df = chain.copy()
         df["volume"] = df["volume"].fillna(0)
         df["mid"]    = df["mid"].fillna(0)
         df["vwap"]   = df.get("vwap", df["mid"]).fillna(df["mid"])
 
-        # Premium per strike: prefer VWAP × volume (more accurate for daily total)
-        # Falls back to mid × volume when vwap unavailable
         price_for_prem = df["vwap"].where(df["vwap"] > 0, df["mid"])
-        df["premium"] = price_for_prem * df["volume"] * 100
+        df["premium"]  = price_for_prem * df["volume"] * 100
 
-        # Filter to strikes within 10% of spot
         df = df[abs(df["strike"] - spot) / spot <= 0.10]
 
-        # Direction-aligned strikes
         target_type = "call" if direction == "CALL" else "put"
         directional = df[(df["option_type"] == target_type) & (df["volume"] > 0)].copy()
 
@@ -542,18 +474,12 @@ class WhaleAnalyzer:
             return {
                 "supports": False,
                 "summary":  f"No {direction.lower()} flow detected near spot",
-                "count":    0,
-                "premium":  0,
+                "count":    0, "premium": 0,
             }
 
-        # Tier 1: Individual strikes with $500K+ premium (true whale block)
-        big_strikes = directional[directional["premium"] >= threshold]
-
-        # Tier 2: AGGREGATE directional pressure — total premium in direction near ATM
-        # If a stock has $2M+ total CALL premium near spot, that's institutional
-        # interest even if no single strike crossed $500K
-        agg_threshold = threshold * 2  # $1M aggregate for the soft tier
-        total_directional_prem = float(directional["premium"].sum())
+        big_strikes  = directional[directional["premium"] >= threshold]
+        agg_threshold = threshold * 2
+        total_prem    = float(directional["premium"].sum())
 
         if not big_strikes.empty:
             top = big_strikes.nlargest(1, "premium").iloc[0]
@@ -565,15 +491,15 @@ class WhaleAnalyzer:
                 "count":    len(big_strikes),
                 "premium":  float(big_strikes["premium"].sum()),
             }
-        elif total_directional_prem >= agg_threshold:
+        elif total_prem >= agg_threshold:
             top = directional.nlargest(1, "premium").iloc[0]
             return {
                 "supports": True,
-                "summary":  (f"💪 PRESSURE: ${total_directional_prem:,.0f} aggregate "
+                "summary":  (f"💪 PRESSURE: ${total_prem:,.0f} aggregate "
                              f"{direction.lower()} flow near spot · "
                              f"largest strike: ${top['strike']:.0f} ${top['premium']:,.0f}"),
                 "count":    int((directional["premium"] > 0).sum()),
-                "premium":  total_directional_prem,
+                "premium":  total_prem,
             }
         else:
             top_prem = float(directional["premium"].max()) if not directional.empty else 0
@@ -582,50 +508,87 @@ class WhaleAnalyzer:
                 "summary":  (f"No whale signal · top strike ${top_prem:,.0f} "
                              f"(need $500K block or $1M aggregate)"),
                 "count":    0,
-                "premium":  total_directional_prem,
+                "premium":  total_prem,
             }
+
+
+# ── Strat Confluence Evaluator ────────────────────────────────────────────────
+
+def _evaluate_strat(
+    direction: str,
+    strat_daily: StratResult,
+    strat_4h: StratResult,
+    ftfc: StratFTFC,
+) -> tuple:
+    """
+    Returns (strat_active: bool, strat_summary: str, conviction_bonus: int).
+    conviction_bonus is 1 when Strat adds a meaningful signal.
+
+    Strat signals that count toward conviction:
+    - Directionally aligned combo on Daily or 4H
+    - F2D (for CALL) or F2U (for PUT) on Daily or 4H
+    - PMG on either timeframe
+    - FTFC aligned with direction (all 3 TFs same bias)
+    """
+    signals = []
+    bonus   = 0
+
+    call = direction == "CALL"
+
+    # Check F2 traps — these are the highest-quality reversal signals
+    for strat, tf_label in [(strat_daily, "Daily"), (strat_4h, "4H")]:
+        if call and strat.is_f2d:
+            signals.append(f"F2D 🪤 on {tf_label} (bears trapped)")
+            bonus = 1
+        if not call and strat.is_f2u:
+            signals.append(f"F2U 🪤 on {tf_label} (bulls trapped)")
+            bonus = 1
+
+    # Check combos aligned with direction
+    for strat, tf_label in [(strat_daily, "Daily"), (strat_4h, "4H")]:
+        if strat.combo and strat.combo_dir == direction:
+            signals.append(f"{strat.combo} ▲ on {tf_label}" if call
+                           else f"{strat.combo} ▼ on {tf_label}")
+            bonus = 1
+
+    # PMG — reversal brewing regardless of direction label
+    for strat, tf_label in [(strat_daily, "Daily"), (strat_4h, "4H")]:
+        if strat.is_pmg:
+            signals.append(f"⚡ PMG on {tf_label} ({strat.pmg_count} bars)")
+            bonus = 1
+
+    # FTFC aligned with trade direction
+    ftfc_dir_map = {"BULL": "CALL", "BEAR": "PUT"}
+    if ftfc.ftfc and ftfc_dir_map.get(ftfc.ftfc_dir) == direction:
+        signals.append(f"FTFC {ftfc.summary}")
+        bonus = 1
+
+    strat_active = bool(signals)
+    summary      = " · ".join(signals) if signals else ""
+
+    return strat_active, summary, bonus
 
 
 # ── SwingConfluence Scanner (Main Engine) ─────────────────────────────────────
 
 class SwingScanner:
-    """The main scanner. Finds 3-of-3 confluence setups."""
 
     def __init__(self, alpaca_key=None, alpaca_secret=None):
         self.alpaca = AlpacaClient(alpaca_key, alpaca_secret)
         self.gex    = GEXAnalyzer()
         self.whale  = WhaleAnalyzer()
 
+    # ── Single-ticker diagnostic (unchanged logic, Strat data added) ──────
+
     def diagnose_ticker(self, ticker: str) -> dict:
-        """
-        Diagnostic scan — returns gate-by-gate results without 3-of-3 filter.
-        Used to identify which gate is blocking setups.
-
-        Returns: {
-          "ticker":            str,
-          "spot":              float | None,
-          "daily_patterns":    List[PatternSignal],  # raw detections
-          "h4_patterns":       List[PatternSignal],
-          "directions_tried":  List[str],            # ["CALL", "PUT"] or subset
-          "results":           List[dict]            # per direction: gate results
-        }
-
-        Each result has:
-          "direction":        "CALL" or "PUT"
-          "pattern_count":    int
-          "gex_supports":     bool
-          "gex_summary":      str
-          "whale_supports":   bool
-          "whale_summary":    str
-          "whale_count":      int
-          "whale_top_premium": float
-          "blocked_at":       "patterns" | "gex" | "whales" | "passed"
-        """
         diag = {
             "ticker":           ticker,
             "spot":             None,
             "daily_patterns":   [],
             "h4_patterns":      [],
+            "strat_daily":      None,
+            "strat_4h":         None,
+            "strat_ftfc":       None,
             "directions_tried": [],
             "results":          [],
             "error":            None,
@@ -646,13 +609,18 @@ class SwingScanner:
                 return diag
 
             diag["daily_patterns"] = PatternDetector(ticker, "1D").detect_all(df_daily)
-            diag["h4_patterns"]    = PatternDetector(ticker, "4H").detect_all(df_4h) if not df_4h.empty else []
+            diag["h4_patterns"]    = (PatternDetector(ticker, "4H").detect_all(df_4h)
+                                      if not df_4h.empty else [])
+
+            # Strat analysis
+            diag["strat_daily"] = StratDetector.analyze(df_daily, "1D")
+            diag["strat_4h"]    = StratDetector.analyze(df_4h, "4H") if not df_4h.empty else StratResult("4H")
+            diag["strat_ftfc"]  = StratDetector.compute_ftfc(None, df_4h, df_daily)
 
             all_patterns = diag["daily_patterns"] + diag["h4_patterns"]
             calls = [p for p in all_patterns if p.direction == "CALL"]
             puts  = [p for p in all_patterns if p.direction == "PUT"]
 
-            # Fetch chain once for both directions
             chain = self.alpaca.get_options_chain(ticker, days_out=14)
 
             for direction, patterns in [("CALL", calls), ("PUT", puts)]:
@@ -678,23 +646,19 @@ class SwingScanner:
                     diag["results"].append(result)
                     continue
 
-                # Gate 2: GEX
-                gex_result = self.gex.analyze(chain, spot, direction)
-                result["gex_supports"] = gex_result["supports"]
-                result["gex_summary"]  = gex_result["summary"]
-
-                # Gate 3: Whales — compute regardless of GEX for diagnostic purposes
+                gex_result   = self.gex.analyze(chain, spot, direction)
                 whale_result = self.whale.analyze(chain, spot, direction)
+
+                result["gex_supports"]      = gex_result["supports"]
+                result["gex_summary"]       = gex_result["summary"]
                 result["whale_supports"]    = whale_result["supports"]
                 result["whale_summary"]     = whale_result["summary"]
                 result["whale_count"]       = whale_result["count"]
                 result["whale_top_premium"] = whale_result["premium"]
 
-                # Whale override check
                 whale_override = whale_result["premium"] >= WHALE_OVERRIDE
                 result["whale_override"] = whale_override
 
-                # Effective gate (mirrors _build_setup logic)
                 gex_passes = gex_result["supports"] or whale_override
 
                 if not gex_passes:
@@ -702,7 +666,11 @@ class SwingScanner:
                 elif not whale_result["supports"]:
                     result["blocked_at"] = "whales"
                 else:
-                    result["blocked_at"] = "passed_with_override" if whale_override and not gex_result["supports"] else "passed"
+                    result["blocked_at"] = (
+                        "passed_with_override"
+                        if whale_override and not gex_result["supports"]
+                        else "passed"
+                    )
 
                 diag["results"].append(result)
 
@@ -714,7 +682,6 @@ class SwingScanner:
 
     def diagnose_all(self, tickers: List[str] = None,
                      progress_cb=None) -> List[dict]:
-        """Run diagnostic scan on all tickers, return raw gate results."""
         if tickers is None:
             tickers = ALL_TICKERS
 
@@ -724,89 +691,91 @@ class SwingScanner:
         for i, ticker in enumerate(tickers):
             if progress_cb:
                 progress_cb(i / total, f"Diagnosing {ticker} ({i+1}/{total})...")
-
-            diag = self.diagnose_ticker(ticker)
-            results.append(diag)
+            results.append(self.diagnose_ticker(ticker))
 
         return results
 
+    # ── Single-ticker scan ────────────────────────────────────────────────
+
     def scan_ticker(self, ticker: str) -> List[ConfluenceSetup]:
-        """Scan one ticker for confluence setups. Returns 0+ setups."""
         try:
-            # Get spot
             spot = self.alpaca.get_spot(ticker)
             if spot == 0:
                 logger.warning(f"{ticker}: no spot price")
                 return []
 
-            # Get daily + 4H bars
             df_daily = self.alpaca.get_bars(ticker, "1Day", days=250)
             df_4h    = self.alpaca.get_bars(ticker, "4Hour", days=180)
 
             if df_daily.empty:
                 return []
 
-            # Freshness guard — never run pattern detection on a stale tail. If a
-            # feed/pagination gap leaves the most recent bar days old, its levels
-            # land hundreds of points from spot (the bogus 4H "$615" levels). Drop
-            # the daily set entirely if stale; quietly ignore a stale 4H set.
+            # Freshness guard
             now_naive = pd.Timestamp.now("UTC").tz_convert(None)
+
             def _age_days(d) -> float:
-                if d is None or d.empty:
-                    return 1e9
+                if d is None or d.empty: return 1e9
                 ts = pd.to_datetime(d.index[-1])
                 if ts.tzinfo is not None:
                     ts = ts.tz_convert(None)
                 return (now_naive - ts).days
 
             if _age_days(df_daily) > 5:
-                logger.warning(f"{ticker}: daily bars stale (last {df_daily.index[-1]}), skipping")
+                logger.warning(f"{ticker}: daily bars stale, skipping")
                 return []
             if _age_days(df_4h) > 5:
-                logger.warning(f"{ticker}: 4H bars stale (last {df_4h.index[-1] if not df_4h.empty else 'n/a'}), ignoring 4H")
+                logger.warning(f"{ticker}: 4H bars stale, ignoring 4H")
                 df_4h = pd.DataFrame()
 
-            # Daily ATR — drives volatility-aware stops/targets in the trade plan
+            # Daily ATR
             try:
                 atr_series = Indicators.atr(
                     df_daily["High"], df_daily["Low"], df_daily["Close"]
                 )
                 atr_d = float(atr_series.iloc[-1]) if not atr_series.empty else 0.0
-                if not np.isfinite(atr_d):
-                    atr_d = 0.0
+                if not np.isfinite(atr_d): atr_d = 0.0
             except Exception:
                 atr_d = 0.0
 
-            # Detect patterns on both timeframes
+            # ICT/SMC patterns
             daily_patterns = PatternDetector(ticker, "1D").detect_all(df_daily)
-            h4_patterns    = PatternDetector(ticker, "4H").detect_all(df_4h) if not df_4h.empty else []
+            h4_patterns    = (PatternDetector(ticker, "4H").detect_all(df_4h)
+                              if not df_4h.empty else [])
 
             all_patterns = daily_patterns + h4_patterns
 
-            # Level-sanity — a real swing pattern's key level sits near price. Drop
-            # anything whose level is absurdly far from live spot (stale-bar/bad-data
-            # artifacts), e.g. a "9-EMA bounce" at $615 when spot is $924.
+            # Level-sanity filter
             all_patterns = [
                 p for p in all_patterns
-                if p.level and p.level > 0 and abs(p.level - spot) / spot <= MAX_LEVEL_DIST_PCT
+                if p.level and p.level > 0
+                and abs(p.level - spot) / spot <= MAX_LEVEL_DIST_PCT
             ]
             if not all_patterns:
                 return []
 
-            # Group patterns by direction
+            # Strat analysis — run once, reuse for both CALL/PUT builds
+            strat_daily = StratDetector.analyze(df_daily, "1D")
+            strat_4h    = (StratDetector.analyze(df_4h, "4H")
+                           if not df_4h.empty else StratResult("4H"))
+            ftfc        = StratDetector.compute_ftfc(None, df_4h, df_daily)
+
             calls = [p for p in all_patterns if p.direction == "CALL"]
             puts  = [p for p in all_patterns if p.direction == "PUT"]
 
             setups = []
 
-            # Try CALL direction if we have call patterns
             if calls:
-                setup = self._build_setup(ticker, spot, "CALL", calls, atr_d)
+                setup = self._build_setup(
+                    ticker, spot, "CALL", calls, atr_d,
+                    strat_daily, strat_4h, ftfc,
+                )
                 if setup: setups.append(setup)
 
-            # Try PUT direction
             if puts:
-                setup = self._build_setup(ticker, spot, "PUT", puts, atr_d)
+                setup = self._build_setup(
+                    ticker, spot, "PUT", puts, atr_d,
+                    strat_daily, strat_4h, ftfc,
+                )
                 if setup: setups.append(setup)
 
             return setups
@@ -815,66 +784,78 @@ class SwingScanner:
             logger.error(f"{ticker} scan error: {e}")
             return []
 
-    def _build_setup(self, ticker: str, spot: float, direction: str,
-                      patterns: List[PatternSignal], atr: float = 0.0) -> Optional[ConfluenceSetup]:
-        """Build a setup if all 3 confluence factors align."""
+    def _build_setup(
+        self,
+        ticker: str,
+        spot: float,
+        direction: str,
+        patterns: List[PatternSignal],
+        atr: float = 0.0,
+        strat_daily: Optional[StratResult] = None,
+        strat_4h:    Optional[StratResult] = None,
+        ftfc:        Optional[StratFTFC]   = None,
+    ) -> Optional[ConfluenceSetup]:
 
-        # Factor 1: Technical patterns (already validated)
         has_daily = any(p.timeframe == "1D" for p in patterns)
         has_4h    = any(p.timeframe == "4H" for p in patterns)
 
-        # Factor 2 & 3 need options chain
         chain = self.alpaca.get_options_chain(ticker, days_out=14)
         if chain.empty:
             return None
 
-        # Factor 2: GEX
-        gex_result = self.gex.analyze(chain, spot, direction)
-
-        # Factor 3: Whales
+        gex_result   = self.gex.analyze(chain, spot, direction)
         whale_result = self.whale.analyze(chain, spot, direction)
 
-        # Whale override: if directional flow ≥ $5M, GEX gate can be bypassed
         whale_override_active = whale_result["premium"] >= WHALE_OVERRIDE
 
-        # Confluence check
         gex_passes   = gex_result["supports"] or whale_override_active
         whale_passes = whale_result["supports"]
 
-        if not gex_passes:
-            return None  # GEX failed (and not enough whale flow to override)
-        if not whale_passes:
-            return None  # Whale gate failed
+        if not gex_passes or not whale_passes:
+            return None
 
-        # ✅ All factors align — build the setup
-
-        # Conviction scoring
+        # ── Base conviction (ICT/SMC) ──
         if has_daily and has_4h:
-            conviction = 6  # MAX
+            conviction = 6
         elif has_daily:
-            conviction = 5  # HIGH
+            conviction = 5
         else:
-            conviction = 4  # MEDIUM-HIGH (4H only)
+            conviction = 4
 
-        # Tag whale-override setups
+        # ── Strat evaluation ──
+        _sd = strat_daily if strat_daily is not None else StratResult("1D")
+        _s4 = strat_4h    if strat_4h    is not None else StratResult("4H")
+        _ft = ftfc        if ftfc        is not None else StratFTFC()
+
+        strat_active, strat_summary, strat_bonus = _evaluate_strat(
+            direction, _sd, _s4, _ft
+        )
+
+        # Boost to 7★ ELITE when Strat adds signal on top of 6★ or 5★+
+        if strat_active and strat_bonus:
+            conviction = min(conviction + 1, 7)
+
+        # GEX summary (whale override tag)
         if whale_override_active and not gex_result["supports"]:
-            gex_summary = f"⚠️ GEX neutral but ${whale_result['premium']/1_000_000:.1f}M whale flow overrides · {gex_result['summary']}"
+            gex_summary = (f"⚠️ GEX neutral but "
+                           f"${whale_result['premium']/1_000_000:.1f}M whale flow overrides · "
+                           f"{gex_result['summary']}")
         else:
             gex_summary = gex_result["summary"]
 
-        # Trade plan
-        plan = self._build_trade_plan(spot, direction, patterns, gex_result, chain, atr)
+        plan = self._build_trade_plan(
+            spot, direction, patterns, gex_result, chain, atr
+        )
 
-        # Filter: reject setups with insufficient risk/reward
         if plan["risk_reward"] < MIN_RISK_REWARD:
             logger.info(
-                f"{ticker} {direction} rejected: R/R {plan['risk_reward']} < {MIN_RISK_REWARD} "
-                f"(entry ${plan['entry_above']}, stop ${plan['stop_below']}, target ${plan['target']})"
+                f"{ticker} {direction} rejected: R/R {plan['risk_reward']} < {MIN_RISK_REWARD}"
             )
             return None
 
         return ConfluenceSetup(
-            ticker=ticker, direction=direction, conviction=conviction, spot=spot,
+            ticker=ticker, direction=direction,
+            conviction=conviction, spot=spot,
             patterns=patterns, has_daily=has_daily, has_4h=has_4h,
             gex_summary=gex_summary,
             nearest_magnet=gex_result["magnet"],
@@ -883,16 +864,24 @@ class SwingScanner:
             whale_summary=whale_result["summary"],
             whale_count=whale_result["count"],
             whale_premium=whale_result["premium"],
+            strat_daily=_sd,
+            strat_4h=_s4,
+            strat_ftfc=_ft,
+            strat_active=strat_active,
+            strat_summary=strat_summary,
             **plan,
         )
 
-    def _build_trade_plan(self, spot: float, direction: str,
-                          patterns: List[PatternSignal],
-                          gex_result: dict, chain: pd.DataFrame,
-                          atr: float = 0.0) -> dict:
-        """Build entry/stop/target/strike based on technical + GEX + OI liquidity."""
+    def _build_trade_plan(
+        self,
+        spot: float,
+        direction: str,
+        patterns: List[PatternSignal],
+        gex_result: dict,
+        chain: pd.DataFrame,
+        atr: float = 0.0,
+    ) -> dict:
 
-        # Find liquid OTM strike — prefer 5-10 DTE, require OI for tight spreads
         target_dte_min, target_dte_max = 3, 14
         today = datetime.now().date()
 
@@ -906,32 +895,27 @@ class SwingScanner:
         if df.empty:
             df = chain[chain["option_type"] == direction.lower()]
 
-        # Filter to OTM only
         if direction == "CALL":
             df_otm = df[df["strike"] > spot].copy()
         else:
             df_otm = df[df["strike"] < spot].copy()
 
-        # Tradeable basics: positive bid, sane spread
         df_otm = df_otm[
             (df_otm["bid"] > 0.05) &
-            (df_otm["spread_pct"] < 15)  # reject spreads > 15% of mid
+            (df_otm["spread_pct"] < 15)
         ]
 
         strike, expiry, picked_oi, oi_quality = spot, "", 0, "unknown"
 
         if not df_otm.empty:
-            # Tier 1: PREFERRED — OI >= 1000 + spread <= 5%
             tier1 = df_otm[
                 (df_otm["open_interest"] >= PREFERRED_OI_THRESHOLD) &
                 (df_otm["spread_pct"] <= 5)
             ]
-            # Tier 2: ACCEPTABLE — OI >= 500 + spread <= 10%
             tier2 = df_otm[
                 (df_otm["open_interest"] >= MIN_OI_THRESHOLD) &
                 (df_otm["spread_pct"] <= 10)
             ]
-            # Tier 3: ANY — fall back to bid > 0.05 (already filtered)
 
             if not tier1.empty:
                 pick = (tier1.nsmallest(1, "strike") if direction == "CALL"
@@ -951,49 +935,40 @@ class SwingScanner:
                 expiry    = str(pick.iloc[0]["expiry"])
                 picked_oi = int(pick.iloc[0]["open_interest"])
 
-        # ── Entry / stop / target — entry is LIVE SPOT; structure is the STOP ──
-        # The signal has already fired, so we enter the move underway at the
-        # current price instead of pinning a limit to a stale pattern level (the
-        # old model anchored entry to e.g. a filled FVG that price had already
-        # rejected away from, giving un-fillable entries and fantasy R/R). The
-        # pattern level and GEX support/resistance become the *invalidation*
-        # (stop), and the stop distance is clamped to an ATR band so R/R can't be
-        # faked tight or blown out wide. Targets step past magnets that sit too
-        # close to spot to justify a fresh entry.
         atr_val        = float(atr) if (atr and atr > 0) else spot * ATR_FALLBACK_PCT
         pattern_levels = [float(p.level) for p in patterns if p.level and p.level > 0]
         min_dist       = max(TARGET_MIN_ATR * atr_val, spot * 0.01)
 
         if direction == "CALL":
             entry = spot
-            # Invalidation = nearest structure BELOW spot (pattern level or GEX support)
             below = [lv for lv in pattern_levels if lv < spot]
             gsup  = gex_result.get("support")
             if gsup and gsup < spot:
                 below.append(float(gsup))
-            struct   = max(below) if below else None        # closest support beneath
-            raw_stop = (struct - STOP_LEVEL_BUFFER * atr_val) if struct is not None \
-                       else (spot - 1.5 * atr_val)
-            risk = min(max(spot - raw_stop, RISK_MIN_ATR * atr_val), RISK_MAX_ATR * atr_val)
-            stop = spot - risk
-            # Target = nearest magnet/resistance ≥1·ATR above; else ATR projection
-            ups = sorted(
+            struct   = max(below) if below else None
+            raw_stop = ((struct - STOP_LEVEL_BUFFER * atr_val) if struct is not None
+                        else (spot - 1.5 * atr_val))
+            risk   = min(max(spot - raw_stop, RISK_MIN_ATR * atr_val),
+                         RISK_MAX_ATR * atr_val)
+            stop   = spot - risk
+            ups    = sorted(
                 lv for lv in (gex_result.get("magnet"), gex_result.get("resistance"))
                 if lv and lv > entry + min_dist
             )
             target = ups[0] if ups else entry + ATR_TARGET_MULT * atr_val
-        else:  # PUT
+        else:
             entry = spot
             above = [lv for lv in pattern_levels if lv > spot]
             gres  = gex_result.get("resistance")
             if gres and gres > spot:
                 above.append(float(gres))
-            struct   = min(above) if above else None         # closest resistance above
-            raw_stop = (struct + STOP_LEVEL_BUFFER * atr_val) if struct is not None \
-                       else (spot + 1.5 * atr_val)
-            risk = min(max(raw_stop - spot, RISK_MIN_ATR * atr_val), RISK_MAX_ATR * atr_val)
-            stop = spot + risk
-            downs = sorted(
+            struct   = min(above) if above else None
+            raw_stop = ((struct + STOP_LEVEL_BUFFER * atr_val) if struct is not None
+                        else (spot + 1.5 * atr_val))
+            risk   = min(max(raw_stop - spot, RISK_MIN_ATR * atr_val),
+                         RISK_MAX_ATR * atr_val)
+            stop   = spot + risk
+            downs  = sorted(
                 (lv for lv in (gex_result.get("magnet"), gex_result.get("support"))
                  if lv and lv < entry - min_dist),
                 reverse=True,
@@ -1004,7 +979,6 @@ class SwingScanner:
         stop_below  = float(stop)
         target      = float(target)
 
-        # Risk/reward
         risk   = abs(entry_above - stop_below)
         reward = abs(target - entry_above)
         rr     = round(reward / risk, 2) if risk > 0 else 0
@@ -1021,8 +995,7 @@ class SwingScanner:
         }
 
     def scan_all(self, tickers: List[str] = None,
-                  progress_cb=None) -> List[ConfluenceSetup]:
-        """Scan all tickers and return setups (sorted by conviction)."""
+                 progress_cb=None) -> List[ConfluenceSetup]:
         if tickers is None:
             tickers = ALL_TICKERS
 
@@ -1038,6 +1011,6 @@ class SwingScanner:
                 logger.info(f"✅ {ticker}: {len(setups)} confluence setup(s)")
                 all_setups.extend(setups)
 
-        # Sort: conviction first (6→4), then ticker
+        # Sort: conviction descending (7→4), then ticker
         all_setups.sort(key=lambda s: (-s.conviction, s.ticker))
         return all_setups

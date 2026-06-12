@@ -136,37 +136,6 @@ p, span, label, div {{ color: #d4dce8; }}
 }}
 .stTextInput label, .stTextArea label {{ color: #d4dce8 !important; font-weight: 600; }}
 
-/* Selectbox (e.g. email conviction picker) — closed control */
-.stSelectbox label {{ color: #d4dce8 !important; font-weight: 600; }}
-.stSelectbox div[data-baseweb="select"] > div {{
-  background: {PALETTE['card_dark']} !important;
-  border: 1px solid {PALETTE['border']} !important;
-  color: #ffffff !important;
-  font-family: 'JetBrains Mono', monospace !important;
-}}
-.stSelectbox div[data-baseweb="select"] div {{ color: #ffffff !important; }}
-.stSelectbox div[data-baseweb="select"] svg {{
-  fill: #d4dce8 !important; color: #d4dce8 !important;
-}}
-
-/* Selectbox dropdown menu — renders in a portal outside the sidebar,
-   so the app's other dark rules don't reach it. Force readable contrast. */
-div[data-baseweb="popover"] div[data-baseweb="menu"],
-ul[role="listbox"] {{
-  background: {PALETTE['card']} !important;
-  border: 1px solid {PALETTE['border']} !important;
-}}
-ul[role="listbox"] li {{
-  background: {PALETTE['card']} !important;
-  color: #ffffff !important;
-  font-family: 'JetBrains Mono', monospace !important;
-}}
-ul[role="listbox"] li:hover,
-ul[role="listbox"] li[aria-selected="true"] {{
-  background: {PALETTE['brand_soft']} !important;
-  color: {PALETTE['brand']} !important;
-}}
-
 /* Help tooltips (?) icon */
 [data-testid="stTooltipIcon"] svg {{ color: #6a7a90 !important; fill: #6a7a90 !important; }}
 
@@ -328,17 +297,6 @@ with st.sidebar:
 
     st.markdown("---")
     scan_btn  = st.button("🎯 Run Confluence Scan", type="primary")
-
-    email_min_conv = st.selectbox(
-        "📧 Email which setups?",
-        options=[6, 5, 4],
-        format_func=lambda c: {
-            6: "MAX only (6★)",
-            5: "HIGH + MAX (5★+)",
-            4: "All convictions (4★+)",
-        }[c],
-        index=0,   # default to MAX — loosen this per-scan for ad-hoc plays
-    )
     email_btn = st.button("📧 Email Results")
 
     if st.session_state.last_scan:
@@ -352,13 +310,15 @@ with st.sidebar:
     st.markdown(f"""
     <div style='margin-top:20px;font-size:0.7rem;color:#5a3a80;line-height:1.7;'>
     <b style='color:{PALETTE["brand"]};'>Conviction Tiers</b><br>
+    <span style='color:#ff9f0a;'>⭐⭐⭐⭐⭐⭐⭐ ELITE — Strat confirmed</span><br>
     ⭐⭐⭐⭐⭐⭐ Daily + 4H aligned<br>
     ⭐⭐⭐⭐⭐ Daily signal<br>
     ⭐⭐⭐⭐ 4H signal only<br><br>
-    <b style='color:{PALETTE["brand"]};'>3 Factors</b><br>
+    <b style='color:{PALETTE["brand"]};'>Confluence Factors</b><br>
     Technical pattern (10 types)<br>
     GEX positioning supports<br>
-    Whale flow ($500K+) agrees<br><br>
+    Whale flow ($500K+) agrees<br>
+    <span style='color:#ff9f0a;'>⚡ The Strat combo / F2 / FTFC</span><br><br>
     <i style='color:#3a2a50;'>Educational only<br>Not financial advice</i>
     </div>""", unsafe_allow_html=True)
 
@@ -436,18 +396,11 @@ if email_btn:
     if not st.session_state.setups:
         st.warning("⚠️ Run a scan first")
     else:
-        to_send = [s for s in st.session_state.setups
-                   if s.conviction >= email_min_conv]
-        if not to_send:
-            st.warning(f"⚠️ No setups at {email_min_conv}★+ to email "
-                       f"({len(st.session_state.setups)} found at lower tiers)")
-        else:
-            html = build_swing_report(to_send, "Manual Scan")
-            subj = (f"🎯 SwingConfluence · {len(to_send)} Setup(s) · "
-                    f"{datetime.now().strftime('%b %d %H:%M CT')}")
-            ok, msg = send_email(html, subj)
-            if ok: st.success(f"✅ {msg} · {len(to_send)} setup(s) at {email_min_conv}★+")
-            else:  st.error(f"❌ {msg}")
+        html = build_swing_report(st.session_state.setups, "Manual Scan")
+        subj = f"🎯 SwingConfluence · {len(st.session_state.setups)} Setup(s) · {datetime.now().strftime('%b %d %H:%M CT')}"
+        ok, msg = send_email(html, subj)
+        if ok: st.success(f"✅ {msg}")
+        else:  st.error(f"❌ {msg}")
 
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
@@ -496,19 +449,21 @@ with tab_scanner:
 
     else:
         setups       = st.session_state.setups
+        elite_count  = sum(1 for s in setups if s.conviction == 7)
         max_count    = sum(1 for s in setups if s.conviction == 6)
         high_count   = sum(1 for s in setups if s.conviction == 5)
         medium_count = sum(1 for s in setups if s.conviction == 4)
         call_count   = sum(1 for s in setups if s.direction == "CALL")
         put_count    = sum(1 for s in setups if s.direction == "PUT")
 
-        c1, c2, c3, c4, c5, c6 = st.columns(6)
-        c1.metric("Total",   len(setups))
-        c2.metric("MAX 6★",  max_count)
-        c3.metric("HIGH 5★", high_count)
-        c4.metric("MED 4★",  medium_count)
-        c5.metric("Calls",   call_count)
-        c6.metric("Puts",    put_count)
+        c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
+        c1.metric("Total",    len(setups))
+        c2.metric("ELITE 7★", elite_count)
+        c3.metric("MAX 6★",   max_count)
+        c4.metric("HIGH 5★",  high_count)
+        c5.metric("MED 4★",   medium_count)
+        c6.metric("Calls",    call_count)
+        c7.metric("Puts",     put_count)
 
         st.markdown("---")
 
