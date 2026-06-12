@@ -885,7 +885,9 @@ class SwingScanner:
             logger.info(f"{ticker} {direction} filtered: conviction {conviction}★ < {MIN_CONVICTION}★")
             return None
 
-        rr_floor = MIN_RISK_REWARD_ELITE if conviction == 7 else MIN_RISK_REWARD
+        # ELITE setups need R/R ≥ 1.0 on T1 — "POOR" ELITE is a contradiction
+        # Non-ELITE floor is 0.9 to catch near-miss setups like R/R=0.99
+        rr_floor = 1.0 if conviction == 7 else MIN_RISK_REWARD
         if plan["risk_reward"] < rr_floor:
             logger.info(
                 f"{ticker} {direction} rejected: R/R {plan['risk_reward']} < {rr_floor} "
@@ -1074,24 +1076,27 @@ class SwingScanner:
         # General case: project 2.0× ATR beyond T1 (gives a runner target).
         if direction == "CALL":
             # T2: next Strat level beyond T1, or next GEX level, or ATR projection
-            further_strat = sorted(lv for lv in strat_targets if lv > t1)
+            # Capped at 5×ATR from entry — realistic for a 1-3 day swing
+            max_t2 = entry + 5.0 * atr_val
+            further_strat = sorted(lv for lv in strat_targets if t1 < lv <= max_t2)
             further_gex   = sorted(
                 lv for lv in [gex_result.get("magnet"), gex_result.get("resistance")]
-                if lv and lv > t1 + atr_val * 0.5
+                if lv and t1 + atr_val * 0.5 < lv <= max_t2
             )
             further_ups = further_strat if further_strat else further_gex
-            t2 = further_ups[0] if further_ups else t1 + ATR_TARGET_MULT * atr_val
+            t2 = further_ups[0] if further_ups else min(t1 + ATR_TARGET_MULT * atr_val, max_t2)
         else:
+            min_t2 = entry - 5.0 * atr_val
             further_strat = sorted(
-                (lv for lv in strat_targets if lv < t1), reverse=True
+                (lv for lv in strat_targets if min_t2 <= lv < t1), reverse=True
             )
             further_gex   = sorted(
                 (lv for lv in [gex_result.get("magnet"), gex_result.get("support")]
-                 if lv and lv < t1 - atr_val * 0.5),
+                 if lv and min_t2 <= lv < t1 - atr_val * 0.5),
                 reverse=True,
             )
             further_downs = further_strat if further_strat else further_gex
-            t2 = further_downs[0] if further_downs else t1 - ATR_TARGET_MULT * atr_val
+            t2 = further_downs[0] if further_downs else max(t1 - ATR_TARGET_MULT * atr_val, min_t2)
 
         t2 = float(t2)
 
