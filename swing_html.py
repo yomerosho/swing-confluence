@@ -251,17 +251,29 @@ def render_setup_card(s: ConfluenceSetup) -> str:
           </div>
           <div>
             <div style='font-size:0.68rem;color:{PALETTE["text_muted"]};
-                        font-family:monospace;'>TARGET</div>
+                        font-family:monospace;'>T1 TARGET</div>
             <div style='font-size:0.95rem;color:{PALETTE["brand"]};
-                        font-weight:700;font-family:monospace;'>${s.target:.2f}</div>
+                        font-weight:700;font-family:monospace;'>${t1:.2f}</div>
+            <div style='font-size:0.62rem;color:{PALETTE["text_muted"]};
+                        font-family:monospace;margin-top:2px;'>scale out</div>
+          </div>
+          <div>
+            <div style='font-size:0.68rem;color:{PALETTE["text_muted"]};
+                        font-family:monospace;'>T2 TARGET</div>
+            <div style='font-size:0.95rem;color:{PALETTE["brand"]};
+                        font-weight:700;font-family:monospace;'>${t2:.2f}</div>
+            <div style='font-size:0.62rem;color:{PALETTE["text_muted"]};
+                        font-family:monospace;margin-top:2px;'>runner</div>
           </div>
           <div>
             <div style='font-size:0.68rem;color:{PALETTE["text_muted"]};
                         font-family:monospace;'>R/R</div>
-            <div style='font-size:0.95rem;color:{rr_color};
-                        font-weight:700;font-family:monospace;'>1:{s.risk_reward:.1f}</div>
-            <div style='font-size:0.62rem;color:{rr_color};
-                        font-family:monospace;margin-top:2px;'>{rr_label}</div>
+            <div style='font-size:0.85rem;color:{rr_t1_color};
+                        font-weight:700;font-family:monospace;'>T1 1:{rr_t1:.1f}</div>
+            <div style='font-size:0.85rem;color:{rr_t2_color};
+                        font-weight:700;font-family:monospace;margin-top:3px;'>T2 1:{rr_t2:.1f}</div>
+            <div style='font-size:0.62rem;color:{rr_t1_color};
+                        font-family:monospace;margin-top:2px;'>{_rr_label(rr_t1)}</div>
           </div>
         </div>
 

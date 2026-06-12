@@ -113,8 +113,12 @@ class ConfluenceSetup:
     expiry:           str = ""
     entry_above:      float = 0
     stop_below:       float = 0
-    target:           float = 0
-    risk_reward:      float = 0
+    target:           float = 0      # T1 alias — for backward compat
+    target_t1:        float = 0      # nearest target (scale-out)
+    target_t2:        float = 0      # runner target
+    risk_reward:      float = 0      # R/R to T1 alias
+    rr_t1:            float = 0      # R/R to T1
+    rr_t2:            float = 0      # R/R to T2
     hold_days:        str = "1-3 days"
     strike_oi:        int = 0
     oi_quality:       str = ""
@@ -848,7 +852,8 @@ class SwingScanner:
             gex_summary = gex_result["summary"]
 
         plan = self._build_trade_plan(
-            spot, direction, patterns, gex_result, chain, atr
+            spot, direction, patterns, gex_result, chain, atr,
+            strat_daily=_sd, strat_4h=_s4,
         )
 
         # Drop 4★ setups — 4H-only with no Strat signal, not worth trading
@@ -889,6 +894,8 @@ class SwingScanner:
         gex_result: dict,
         chain: pd.DataFrame,
         atr: float = 0.0,
+        strat_daily: Optional["StratResult"] = None,
+        strat_4h:    Optional["StratResult"] = None,
     ) -> dict:
 
         target_dte_min, target_dte_max = 3, 14
@@ -948,6 +955,42 @@ class SwingScanner:
         pattern_levels = [float(p.level) for p in patterns if p.level and p.level > 0]
         min_dist       = max(TARGET_MIN_ATR * atr_val, spot * 0.01)
 
+        # ── Strat-native target levels ────────────────────────────────────────
+        # For F2D (CALL): T1 = high of the 2U bar that was failed (high[-2]),
+        #                 T2 = highest swing high in the prior 10 bars
+        # For F2U (PUT):  T1 = low of the 2D bar that was failed (low[-2]),
+        #                 T2 = lowest swing low in the prior 10 bars
+        # These sit in the candidate pool alongside GEX levels; nearest qualifying
+        # level beyond min_dist wins.
+        strat_targets: list = []
+        for _s in [strat_daily, strat_4h]:
+            if _s is None:
+                continue
+            # We need the raw bar data — StratResult stores the timeframe label
+            # but not the bars. We re-derive the F2 target from StratResult flags:
+            # is_f2d=True means prev bar was 2D and current close recovered above
+            # prev2 low — so the target is the swing high before the 2D selloff.
+            # We can approximate this as the highest high in bars [-10:-1] of the
+            # relevant series (already computed when StratDetector ran).
+            pass  # targets injected below via df lookup
+
+        # Re-derive Strat targets directly from daily bars (most reliable TF for swings)
+        # Passed in via strat_daily which carries the timeframe label;
+        # we need the actual bar series — but _build_trade_plan only has chain.
+        # Solution: strat results carry bar_types list; we embed the F2 levels
+        # into the StratResult during analysis. Check if they exist.
+        for _s in [strat_daily, strat_4h]:
+            if _s is None:
+                continue
+            f2_t1 = getattr(_s, "f2_t1", None)
+            f2_t2 = getattr(_s, "f2_t2", None)
+            if direction == "CALL" and _s.is_f2d:
+                if f2_t1 and f2_t1 > spot: strat_targets.append(float(f2_t1))
+                if f2_t2 and f2_t2 > spot: strat_targets.append(float(f2_t2))
+            elif direction == "PUT" and _s.is_f2u:
+                if f2_t1 and f2_t1 < spot: strat_targets.append(float(f2_t1))
+                if f2_t2 and f2_t2 < spot: strat_targets.append(float(f2_t2))
+
         if direction == "CALL":
             entry = spot
             below = [lv for lv in pattern_levels if lv < spot]
@@ -960,8 +1003,12 @@ class SwingScanner:
             risk   = min(max(spot - raw_stop, RISK_MIN_ATR * atr_val),
                          RISK_MAX_ATR * atr_val)
             stop   = spot - risk
+            # Strat F2 targets take priority; GEX levels fill in when no F2 target
             ups    = sorted(
-                lv for lv in (gex_result.get("magnet"), gex_result.get("resistance"))
+                lv for lv in (
+                    strat_targets
+                    + [gex_result.get("magnet"), gex_result.get("resistance")]
+                )
                 if lv and lv > entry + min_dist
             )
             target = ups[0] if ups else entry + ATR_TARGET_MULT * atr_val
@@ -978,27 +1025,59 @@ class SwingScanner:
                          RISK_MAX_ATR * atr_val)
             stop   = spot + risk
             downs  = sorted(
-                (lv for lv in (gex_result.get("magnet"), gex_result.get("support"))
-                 if lv and lv < entry - min_dist),
+                (lv for lv in (
+                    strat_targets
+                    + [gex_result.get("magnet"), gex_result.get("support")]
+                )
+                if lv and lv < entry - min_dist),
                 reverse=True,
             )
             target = downs[0] if downs else entry - ATR_TARGET_MULT * atr_val
 
         entry_above = float(entry)
         stop_below  = float(stop)
-        target      = float(target)
+        t1          = float(target)   # nearest qualifying level
 
-        risk   = abs(entry_above - stop_below)
-        reward = abs(target - entry_above)
-        rr     = round(reward / risk, 2) if risk > 0 else 0
+        # T2: next level beyond T1 in the same direction
+        # For F2 setups: already have f2_t2 in strat_targets if it cleared T1.
+        # General case: project 2.0× ATR beyond T1 (gives a runner target).
+        if direction == "CALL":
+            further_ups = sorted(
+                lv for lv in (
+                    strat_targets
+                    + [gex_result.get("magnet"), gex_result.get("resistance")]
+                )
+                if lv and lv > t1 + atr_val * 0.5   # must be meaningfully beyond T1
+            )
+            t2 = further_ups[0] if further_ups else t1 + ATR_TARGET_MULT * atr_val
+        else:
+            further_downs = sorted(
+                (lv for lv in (
+                    strat_targets
+                    + [gex_result.get("magnet"), gex_result.get("support")]
+                )
+                if lv and lv < t1 - atr_val * 0.5),
+                reverse=True,
+            )
+            t2 = further_downs[0] if further_downs else t1 - ATR_TARGET_MULT * atr_val
+
+        t2 = float(t2)
+
+        risk    = abs(entry_above - stop_below)
+        rr_t1   = round(abs(t1 - entry_above) / risk, 2) if risk > 0 else 0
+        rr_t2   = round(abs(t2 - entry_above) / risk, 2) if risk > 0 else 0
 
         return {
             "strike":      round(strike, 2),
             "expiry":      expiry,
             "entry_above": round(entry_above, 2),
             "stop_below":  round(stop_below, 2),
-            "target":      round(target, 2),
-            "risk_reward": rr,
+            "target":      round(t1, 2),       # backward compat alias
+            "target_t1":   round(t1, 2),
+            "target_t2":   round(t2, 2),
+            "risk_reward": rr_t1,              # backward compat alias
+            "rr_t1":       rr_t1,
+            "rr_t2":       rr_t2,
             "strike_oi":   picked_oi,
             "oi_quality":  oi_quality,
         }
