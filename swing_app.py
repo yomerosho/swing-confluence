@@ -368,160 +368,190 @@ def send_email(html, subject):
 
 
 def build_export_xlsx(setups):
-    """Build an in-memory xlsx with all setups for filtering/sorting."""
+    """Build a clean, readable xlsx for filtering and sorting setups."""
     import io
     from openpyxl import Workbook
-    from openpyxl.styles import Font, PatternFill, Alignment, PatternFill
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
     from openpyxl.utils import get_column_letter
+
+    # ── Palette ─────────────────────────────────────────────────
+    BG_WHITE  = "FFFFFF"; BG_ALT    = "F7F8FC"; BG_HEADER = "1E2D4E"
+    BG_ELITE  = "FFF3E0"; BG_MAX    = "EDE7F6"; BG_HIGH   = "E8F5E9"
+    BG_CALL   = "E8F5E9"; BG_PUT    = "FFEBEE"
+    FG_HEADER = "FFFFFF"; FG_ELITE  = "E65100"; FG_MAX    = "6A1B9A"
+    FG_HIGH   = "2E7D32"; FG_CALL   = "1B5E20"; FG_PUT    = "B71C1C"
+    FG_BODY   = "212121"; FG_MUTED  = "546E7A"; BORDER    = "CFD8DC"
+
+    def _rr_color(v):
+        if v >= 2.0: return "1B5E20"
+        if v >= 1.5: return "2E7D32"
+        if v >= 1.0: return "E65100"
+        return "B71C1C"
+
+    def _btm(color=BORDER):
+        s = Side(style="thin", color=color)
+        return Border(bottom=s)
+
+    COLS = [
+        ("Ticker",    10, "@"),   ("Dir",        6, "@"),
+        ("★",          5, "0"),   ("Tier",        9, "@"),
+        ("Spot",       9, "$#,##0.00"), ("Strike",  8, "$#,##0.00"),
+        ("Expiry",    11, "@"),   ("Entry",       9, "$#,##0.00"),
+        ("Stop",       9, "$#,##0.00"), ("T1",      9, "$#,##0.00"),
+        ("T2",         9, "$#,##0.00"), ("R/R T1",  8, "0.00"),
+        ("R/R T2",     8, "0.00"), ("OI",         13, "@"),
+        ("Technical", 36, "@"),   ("GEX",         30, "@"),
+        ("Whales",    34, "@"),   ("Strat",       30, "@"),
+        ("FTFC",       6, "0"),   ("Daily",        7, "@"),
+        ("4H",         5, "@"),   ("Whale $",     12, "$#,##0"),
+        ("Support",    9, "$#,##0.00"), ("Resist",  9, "$#,##0.00"),
+    ]
+
+    tier_fg = {7: FG_ELITE, 6: FG_MAX, 5: FG_HIGH, 4: FG_MUTED}
+    tier_bg = {7: BG_ELITE, 6: BG_MAX, 5: BG_HIGH, 4: BG_ALT}
+    conv_lbl = {7: "ELITE", 6: "MAX", 5: "HIGH", 4: "MED"}
 
     wb = Workbook()
     ws = wb.active
-    ws.title = "SwingConfluence Setups"
+    ws.title = "Setups"
+    ws.sheet_view.showGridLines = False
 
-    # ── Header row ─────────────────────────────────────────────
-    headers = [
-        "Ticker", "Direction", "Stars", "Conviction",
-        "Spot", "Strike", "Expiry",
-        "Entry", "Stop", "T1 Target", "T2 Target",
-        "R/R T1", "R/R T2", "OI Quality",
-        "Technical", "GEX", "Whales",
-        "Strat Signals", "FTFC Score",
-        "Has Daily", "Has 4H",
-        "Whale Premium ($)", "Support", "Resistance",
-    ]
+    # ── Header row ───────────────────────────────────────────────
+    ws.row_dimensions[1].height = 28
+    hdr_fill  = PatternFill("solid", start_color=BG_HEADER)
+    hdr_font  = Font(name="Calibri", bold=True, color=FG_HEADER, size=10)
+    hdr_align = Alignment(horizontal="center", vertical="center")
+    accent    = Side(style="medium", color="4FC3F7")
 
-    DARK_HDR  = "1E293B"
-    BRAND_CLR = "BC8CFF"
-    GREEN_CLR = "4AF0C4"
-    RED_CLR   = "F04A6A"
-    GOLD_CLR  = "F5C842"
-    ELITE_CLR = "FF9F0A"
-    WHITE     = "F0F4FB"
-    CARD_CLR  = "2A2F3D"
+    for ci, (hdr, width, _) in enumerate(COLS, 1):
+        c = ws.cell(row=1, column=ci, value=hdr)
+        c.font = hdr_font; c.fill = hdr_fill; c.alignment = hdr_align
+        c.border = Border(bottom=accent)
+        ws.column_dimensions[get_column_letter(ci)].width = width
 
-    hdr_font = Font(bold=True, color=WHITE, name="Arial", size=10)
-    hdr_fill = PatternFill("solid", start_color=DARK_HDR)
-    hdr_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    # ── Data rows ────────────────────────────────────────────────
+    for ri, s in enumerate(setups, 2):
+        ws.row_dimensions[ri].height = 18
+        row_bg   = BG_ALT if ri % 2 == 0 else BG_WHITE
+        rr_t1    = getattr(s, "rr_t1",    s.risk_reward)
+        rr_t2    = getattr(s, "rr_t2",    0.0)
+        t1       = getattr(s, "target_t1", s.target)
+        t2       = getattr(s, "target_t2", 0.0)
+        ftfc_obj = getattr(s, "strat_ftfc", None)
+        ftfc_sc  = ftfc_obj.score if ftfc_obj else 0
+        tech     = " | ".join(f"{p.timeframe}: {p.pattern}" for p in s.patterns)
+        strat    = getattr(s, "strat_summary", "")
 
-    ws.row_dimensions[1].height = 32
-    for col_idx, h in enumerate(headers, 1):
-        cell = ws.cell(row=1, column=col_idx, value=h)
-        cell.font = hdr_font
-        cell.fill = hdr_fill
-        cell.alignment = hdr_align
-
-    # ── Data rows ───────────────────────────────────────────────
-    conv_labels = {7: "ELITE", 6: "MAX", 5: "HIGH", 4: "MED"}
-
-    for row_idx, s in enumerate(setups, 2):
-        rr_t1 = getattr(s, "rr_t1", s.risk_reward)
-        rr_t2 = getattr(s, "rr_t2", 0.0)
-        t1    = getattr(s, "target_t1", s.target)
-        t2    = getattr(s, "target_t2", 0.0)
-        strat_summary = getattr(s, "strat_summary", "")
-        strat_ftfc    = getattr(s, "strat_ftfc", None)
-        ftfc_score = strat_ftfc.score if strat_ftfc else 0
-
-        # Technical patterns summary
-        tech_summary = " | ".join(f"{p.timeframe}: {p.pattern}" for p in s.patterns)
-
-        row = [
-            s.ticker,
-            s.direction,
-            s.conviction,
-            conv_labels.get(s.conviction, ""),
-            round(s.spot, 2),
-            round(s.strike, 2),
-            s.expiry or "",
-            round(s.entry_above, 2),
-            round(s.stop_below, 2),
-            round(t1, 2),
-            round(t2, 2) if t2 else "",
-            rr_t1,
-            rr_t2 if rr_t2 else "",
-            getattr(s, "oi_quality", ""),
-            tech_summary,
-            s.gex_summary,
-            s.whale_summary,
-            strat_summary,
-            ftfc_score,
-            "Yes" if s.has_daily else "No",
-            "Yes" if s.has_4h else "No",
+        row_vals = [
+            s.ticker, s.direction, s.conviction, conv_lbl.get(s.conviction, ""),
+            round(s.spot, 2), round(s.strike, 2), s.expiry or "—",
+            round(s.entry_above, 2), round(s.stop_below, 2),
+            round(t1, 2), round(t2, 2) if t2 else "",
+            rr_t1, rr_t2 if rr_t2 else "",
+            getattr(s, "oi_quality", ""), tech,
+            s.gex_summary, s.whale_summary, strat, ftfc_sc,
+            "✓" if s.has_daily else "–",
+            "✓" if s.has_4h   else "–",
             round(s.whale_premium, 0),
-            round(s.support_level, 2) if s.support_level else "",
-            round(s.resistance_level, 2) if s.resistance_level else "",
+            s.support_level or "", s.resistance_level or "",
         ]
 
-        for col_idx, val in enumerate(row, 1):
-            cell = ws.cell(row=row_idx, column=col_idx, value=val)
-            cell.font = Font(name="Arial", size=9)
-            cell.alignment = Alignment(vertical="center")
+        for ci, (val, (_, _, fmt)) in enumerate(zip(row_vals, COLS), 1):
+            c = ws.cell(row=ri, column=ci, value=val)
+            c.font   = Font(name="Calibri", size=9, color=FG_BODY)
+            c.fill   = PatternFill("solid", start_color=row_bg)
+            c.alignment = Alignment(vertical="center", horizontal="center")
+            c.number_format = fmt
+            c.border = _btm()
 
-        # Color-code conviction column (C)
-        conv_cell = ws.cell(row=row_idx, column=3)
-        color_map = {7: ELITE_CLR, 6: BRAND_CLR, 5: GREEN_CLR, 4: GOLD_CLR}
-        c = color_map.get(s.conviction)
-        if c:
-            conv_cell.font = Font(name="Arial", size=9, bold=True, color=c)
+        # Ticker — left, bold
+        tc = ws.cell(row=ri, column=1)
+        tc.font = Font(name="Calibri", size=9, bold=True, color=FG_BODY)
+        tc.alignment = Alignment(vertical="center", horizontal="left")
 
-        # Color-code direction (B)
-        dir_cell = ws.cell(row=row_idx, column=2)
-        dir_cell.font = Font(name="Arial", size=9, bold=True,
-                             color=GREEN_CLR if s.direction == "CALL" else RED_CLR)
+        # Direction
+        dc = ws.cell(row=ri, column=2)
+        dc.font = Font(name="Calibri", size=9, bold=True,
+                       color=FG_CALL if s.direction == "CALL" else FG_PUT)
+        dc.fill = PatternFill("solid", start_color=BG_CALL if s.direction == "CALL" else BG_PUT)
 
-        # Color-code R/R T1 (L)
-        rr_cell = ws.cell(row=row_idx, column=12)
-        rr_color = GREEN_CLR if rr_t1 >= 1.5 else (GOLD_CLR if rr_t1 >= 1.0 else RED_CLR)
-        rr_cell.font = Font(name="Arial", size=9, bold=True, color=rr_color)
+        # Stars + Tier
+        for ci in (3, 4):
+            cc = ws.cell(row=ri, column=ci)
+            cc.font = Font(name="Calibri", size=9, bold=True,
+                           color=tier_fg.get(s.conviction, FG_BODY))
+            cc.fill = PatternFill("solid", start_color=tier_bg.get(s.conviction, row_bg))
 
-        # Zebra stripe
-        if row_idx % 2 == 0:
-            fill = PatternFill("solid", start_color="1A1F2A")
-            for col_idx in range(1, len(headers) + 1):
-                ws.cell(row=row_idx, column=col_idx).fill = fill
+        # R/R T1 bold colored
+        rrc = ws.cell(row=ri, column=12)
+        rrc.font = Font(name="Calibri", size=9, bold=True, color=_rr_color(rr_t1))
 
-    # ── Column widths ────────────────────────────────────────────
-    widths = [8, 9, 6, 9, 8, 7, 11, 8, 8, 10, 10, 7, 7, 12,
-              40, 30, 40, 35, 8, 9, 7, 15, 10, 11]
-    for i, w in enumerate(widths, 1):
-        ws.column_dimensions[get_column_letter(i)].width = w
+        # R/R T2 soft colored
+        if rr_t2:
+            rr2c = ws.cell(row=ri, column=13)
+            rr2c.font = Font(name="Calibri", size=9, color=_rr_color(rr_t2))
 
-    # ── Auto-filter on header row ─────────────────────────────────
-    ws.auto_filter.ref = f"A1:{get_column_letter(len(headers))}1"
-    ws.freeze_panes   = "A2"
+        # Long text cols — left-align
+        for ci in (15, 16, 17, 18):
+            cc = ws.cell(row=ri, column=ci)
+            cc.alignment = Alignment(vertical="center", horizontal="left")
 
-    # ── Summary sheet ─────────────────────────────────────────────
+        # Daily / 4H checkmarks
+        for ci in (20, 21):
+            cc = ws.cell(row=ri, column=ci)
+            cc.font = Font(name="Calibri", size=9, bold=True,
+                           color=FG_HIGH if cc.value == "✓" else FG_MUTED)
+
+    ws.freeze_panes = "A2"
+    ws.auto_filter.ref = f"A1:{get_column_letter(len(COLS))}1"
+
+    # ── Summary sheet ────────────────────────────────────────────
     ws2 = wb.create_sheet("Summary")
-    ws2["A1"] = "SwingConfluence Export"
-    ws2["A1"].font = Font(bold=True, size=14, color=BRAND_CLR, name="Arial")
-    ws2["A3"] = "Total Setups"
-    ws2["B3"] = f"=COUNTA(Setups!A2:A{len(setups)+1})"
-    ws2["A4"] = "ELITE (7★)"
-    ws2["B4"] = f"=COUNTIF(Setups!C2:C{len(setups)+1},7)"
-    ws2["A5"] = "MAX (6★)"
-    ws2["B5"] = f"=COUNTIF(Setups!C2:C{len(setups)+1},6)"
-    ws2["A6"] = "HIGH (5★)"
-    ws2["B6"] = f"=COUNTIF(Setups!C2:C{len(setups)+1},5)"
-    ws2["A7"] = "Calls"
-    ws2["B7"] = f'=COUNTIF(Setups!B2:B{len(setups)+1},"CALL")'
-    ws2["A8"] = "Puts"
-    ws2["B8"] = f'=COUNTIF(Setups!B2:B{len(setups)+1},"PUT")'
-    ws2["A10"] = "Best R/R T1"
-    ws2["B10"] = f"=MAX(Setups!L2:L{len(setups)+1})"
-    ws2["A11"] = "Avg R/R T1"
-    ws2["B11"] = f"=AVERAGE(Setups!L2:L{len(setups)+1})"
+    ws2.sheet_view.showGridLines = False
+    ws2.column_dimensions["A"].width = 22
+    ws2.column_dimensions["B"].width = 12
+    n = len(setups)
 
-    for r in range(3, 12):
-        ws2.cell(row=r, column=1).font = Font(name="Arial", size=10, bold=True)
-        ws2.cell(row=r, column=2).font = Font(name="Arial", size=10, color=GREEN_CLR)
-    ws2.column_dimensions["A"].width = 18
-    ws2.column_dimensions["B"].width = 14
+    summary = [
+        ("SwingConfluence Export", None, None, True),
+        (None, None, None, False),
+        ("Metric", "Value", None, True),
+        ("Total Setups",     f"=COUNTA(Setups!A2:A{n+1})", None, False),
+        ("ELITE (7★)",       f"=COUNTIF(Setups!C2:C{n+1},7)", None, False),
+        ("MAX (6★)",         f"=COUNTIF(Setups!C2:C{n+1},6)", None, False),
+        ("HIGH (5★)",        f"=COUNTIF(Setups!C2:C{n+1},5)", None, False),
+        ("Calls",            f'=COUNTIF(Setups!B2:B{n+1},"CALL")', None, False),
+        ("Puts",             f'=COUNTIF(Setups!B2:B{n+1},"PUT")', None, False),
+        (None, None, None, False),
+        ("Best R/R T1",      f"=MAX(Setups!L2:L{n+1})", "0.00", False),
+        ("Avg R/R T1",       f"=AVERAGE(Setups!L2:L{n+1})", "0.00", False),
+        ("R/R ≥ 2.0",        f'=COUNTIF(Setups!L2:L{n+1},">=2")', None, False),
+        ("R/R ≥ 1.5",        f'=COUNTIF(Setups!L2:L{n+1},">=1.5")', None, False),
+    ]
+    for ri, (label, val, fmt, bold) in enumerate(summary, 1):
+        ws2.row_dimensions[ri].height = 20
+        if label is None: continue
+        la = ws2.cell(row=ri, column=1, value=label)
+        if ri == 1:
+            la.font = Font(name="Calibri", bold=True, size=12, color=BG_HEADER)
+        elif ri == 3:
+            la.font = Font(name="Calibri", bold=True, size=10, color=FG_HEADER)
+            la.fill = PatternFill("solid", start_color=BG_HEADER)
+        else:
+            la.font = Font(name="Calibri", size=10, color=FG_BODY)
+        if val is not None:
+            vb = ws2.cell(row=ri, column=2, value=val)
+            if ri == 3:
+                vb.font = Font(name="Calibri", bold=True, size=10, color=FG_HEADER)
+                vb.fill = PatternFill("solid", start_color=BG_HEADER)
+            else:
+                vb.font = Font(name="Calibri", size=10, bold=True, color=FG_HIGH)
+            if fmt: vb.number_format = fmt
 
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
     return buf.getvalue()
-
 
 if scan_btn:
     if not ALPACA_KEY or not ALPACA_SECRET:
