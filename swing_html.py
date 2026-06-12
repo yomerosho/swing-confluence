@@ -41,7 +41,7 @@ PALETTE = {
 }
 
 # ── Conviction labels ─────────────────────────────────────────────────────────
-# 7★ ELITE = 3-of-3 confluence + Strat signal aligned
+# 7★ ELITE = 4-of-4 confluence: Technical + GEX + Whales + Strat
 
 CONVICTION_LABELS = {
     7: ("⭐⭐⭐⭐⭐⭐⭐", "ELITE",         PALETTE["elite"]),
@@ -326,7 +326,7 @@ def build_swing_report(setups: List[ConfluenceSetup],
         {slot_label} · {timestamp}
       </div>
       <div style='color:{PALETTE["text_muted"]};font-family:monospace;font-size:0.78rem;margin-top:4px;'>
-        3-of-3 confluence setups · Technical + GEX + Whale Flow · The Strat · 1-3 day swings
+        3-of-3 confluence · 4-of-4 ELITE when Strat aligns · 1-3 day swings
       </div>
     </div>
     """
@@ -340,7 +340,7 @@ def build_swing_report(setups: List[ConfluenceSetup],
             No confluence setups detected
           </div>
           <div style='color:{PALETTE["text_dim"]};font-family:monospace;font-size:0.85rem;margin-top:8px;'>
-            All tickers scanned. None meet the 3-of-3 confluence threshold today.
+            All tickers scanned. None meet the 3-of-3 confluence threshold today. (4-of-4 for ELITE)
           </div>
           <div style='color:{PALETTE["text_muted"]};font-family:monospace;font-size:0.75rem;margin-top:14px;'>
             This is normal — patience is part of the edge.
@@ -400,7 +400,7 @@ def build_swing_report(setups: List[ConfluenceSetup],
     <div style='margin-top:24px;padding:18px;background:{PALETTE["card_dark"]};
                 border-radius:8px;text-align:center;'>
       <div style='color:{PALETTE["text_muted"]};font-family:monospace;font-size:0.72rem;line-height:1.6;'>
-        SwingConfluence · Alpaca real-time data · 3-of-3 confluence + The Strat<br>
+        SwingConfluence · Alpaca real-time data · 3-of-3 confluence · 4-of-4 ELITE w/ Strat<br>
         Educational use only · Not financial advice
       </div>
       <div style='color:{PALETTE["text_muted"]};font-family:monospace;font-size:0.65rem;

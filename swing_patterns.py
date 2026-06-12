@@ -235,46 +235,40 @@ class StratDetector:
             #   T1 = low of the bar BEFORE the 2U bar (the last down swing low)
             #   T2 = lowest low in the 10 bars preceding that
             if result.is_f2d and len(df) >= 5:
-                # F2D (bullish): T1 = nearest swing high above price,
-                #                T2 = second nearest (not the blow-off top).
-                # Lookback: 5 bars before prev2 — one trading week on daily,
-                # keeps targets in near-term structure rather than old highs.
-                candidates = set()
-                candidates.add(float(prev2["High"]))
-                lookback_start = max(0, len(df) - 8)   # 5 bars before prev2
+                # F2D (bullish): Rob Smith's targets:
+                #   T1 = high of prev2 (the last bar before the 2D selloff)
+                #        This is the exact level bears who shorted the breakdown
+                #        need to cover to — the clearest near-term target.
+                #   T2 = highest high in the 3 bars before prev2
+                #        Next structure resistance above T1.
+                t1_candidate = float(prev2["High"])
+                if t1_candidate > c0:
+                    result.f2_t1 = round(t1_candidate, 2)
+                # T2: highest high in bars[-6:-3] (3 bars before prev2)
+                lookback_start = max(0, len(df) - 6)
                 lookback_end   = len(df) - 3
                 if lookback_end > lookback_start:
                     window = df.iloc[lookback_start:lookback_end]
-                    for idx in range(len(window)):
-                        h = float(window.iloc[idx]["High"])
-                        if h > c0:
-                            candidates.add(round(h, 2))
-                # Sort ascending — nearest first, second-nearest as T2
-                sorted_highs = sorted(lv for lv in candidates if lv > c0)
-                if len(sorted_highs) >= 1:
-                    result.f2_t1 = sorted_highs[0]    # nearest resistance
-                if len(sorted_highs) >= 2:
-                    result.f2_t2 = sorted_highs[1]    # second nearest (not blow-off)
+                    t2_candidate = float(window["High"].max())
+                    if t2_candidate > c0 and t2_candidate != t1_candidate:
+                        result.f2_t2 = round(t2_candidate, 2)
+                # If T2 == T1 or not found, step up one ATR from T1
+                # (handled downstream in _build_trade_plan fallback)
 
             if result.is_f2u and len(df) >= 5:
-                # F2U (bearish): T1 = nearest swing low below price,
-                #                T2 = second nearest low.
-                candidates = set()
-                candidates.add(float(prev2["Low"]))
-                lookback_start = max(0, len(df) - 8)
+                # F2U (bearish): symmetric logic
+                #   T1 = low of prev2 (the last bar before the 2U run-up)
+                #   T2 = lowest low in bars[-6:-3]
+                t1_candidate = float(prev2["Low"])
+                if t1_candidate < c0:
+                    result.f2_t1 = round(t1_candidate, 2)
+                lookback_start = max(0, len(df) - 6)
                 lookback_end   = len(df) - 3
                 if lookback_end > lookback_start:
                     window = df.iloc[lookback_start:lookback_end]
-                    for idx in range(len(window)):
-                        l = float(window.iloc[idx]["Low"])
-                        if l < c0:
-                            candidates.add(round(l, 2))
-                # Sort descending — nearest first, second-nearest as T2
-                sorted_lows = sorted((lv for lv in candidates if lv < c0), reverse=True)
-                if len(sorted_lows) >= 1:
-                    result.f2_t1 = sorted_lows[0]    # nearest support
-                if len(sorted_lows) >= 2:
-                    result.f2_t2 = sorted_lows[1]    # second nearest
+                    t2_candidate = float(window["Low"].min())
+                    if t2_candidate < c0 and t2_candidate != t1_candidate:
+                        result.f2_t2 = round(t2_candidate, 2)
 
             # ── Combo detection ───────────────────────────────────────
             combo, combo_dir = cls._detect_combo(t0, t1, t2, c0, o0)

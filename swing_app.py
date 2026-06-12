@@ -242,7 +242,7 @@ def _remove_custom_ticker(ticker):
 
 with st.sidebar:
     st.markdown("## 🎯 SwingConfluence")
-    st.markdown("*3-of-3 swing setups · 1-3 day holds*")
+    st.markdown("*3-of-3 confluence · 4-of-4 ELITE with Strat · 1-3 day holds*")
     st.markdown("---")
 
     st.markdown("### 🎯 Scope")
@@ -419,7 +419,7 @@ with tab_scanner:
         st.markdown(f"""
         <div style='text-align:center;padding:80px 0;'>
           <div style='font-size:4rem;'>🎯</div>
-          <h2 style='font-family:Syne,sans-serif;color:#5a3a80;margin-top:16px;'>3-of-3 Swing Confluence Scanner</h2>
+          <h2 style='font-family:Syne,sans-serif;color:#5a3a80;margin-top:16px;'>3-of-3 Confluence · 4-of-4 ELITE Scanner</h2>
           <p style='font-family:JetBrains Mono,monospace;color:#3a2a50;font-size:0.9rem;'>
             Click <b style='color:{PALETTE["brand"]};'>Run Confluence Scan</b> in the sidebar
           </p>
@@ -440,7 +440,7 @@ with tab_scanner:
           <div style='font-size:3rem;'>🔍</div>
           <h3 style='color:{PALETTE["text"]};font-family:monospace;margin-top:12px;'>No confluence setups today</h3>
           <p style='color:{PALETTE["text_dim"]};font-family:monospace;font-size:0.85rem;'>
-            All tickers scanned. None meet the 3-of-3 threshold.
+            All tickers scanned. None meet the 3-of-3 threshold. (4-of-4 for ELITE)
           </p>
           <p style='color:{PALETTE["text_muted"]};font-family:monospace;font-size:0.78rem;margin-top:14px;'>
             Run the <b>🔬 Diagnostic Scan</b> tab to see which gate is filtering setups out.
@@ -858,7 +858,7 @@ with st.expander("📧 Manage Email Subscribers", expanded=False):
     current_subs = _load_subs()
 
     st.markdown(f"**Current subscribers: {len(current_subs)}**")
-    st.caption("Emails are sent automatically at 8 AM / 1 PM / 4 PM CT when 3-of-3 setups are found.")
+    st.caption("Emails are sent at 8 AM / 1 PM / 4 PM CT when setups are found. 4-of-4 ELITE includes Strat alignment.")
 
     if current_subs:
         for sub in current_subs:
@@ -920,5 +920,5 @@ with st.expander("📧 Manage Email Subscribers", expanded=False):
 st.markdown("---")
 st.markdown(f"""
 <div style='text-align:center;font-family:JetBrains Mono,monospace;font-size:0.68rem;color:#1a0a30;'>
-  SwingConfluence · Alpaca real-time data · 3-of-3 confluence required
+  SwingConfluence · Alpaca real-time data · 3-of-3 confluence · 4-of-4 ELITE w/ Strat
 </div>""", unsafe_allow_html=True)
