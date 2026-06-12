@@ -762,6 +762,18 @@ class SwingScanner:
                            if not df_4h.empty else StratResult("4H"))
             ftfc        = StratDetector.compute_ftfc(None, df_4h, df_daily)
 
+            # DEBUG — log Strat state for every ticker so we can see why F2 doesn't fire
+            logger.info(
+                f"{ticker} STRAT 1D: types={strat_daily.bar_types} "
+                f"f2d={strat_daily.is_f2d} f2u={strat_daily.is_f2u} "
+                f"combo={strat_daily.combo}/{strat_daily.combo_dir} "
+                f"f2_t1={strat_daily.f2_t1} f2_t2={strat_daily.f2_t2} | "
+                f"4H: types={strat_4h.bar_types} "
+                f"f2d={strat_4h.is_f2d} f2u={strat_4h.is_f2u} "
+                f"combo={strat_4h.combo}/{strat_4h.combo_dir} | "
+                f"FTFC: {ftfc.summary}"
+            )
+
             calls = [p for p in all_patterns if p.direction == "CALL"]
             puts  = [p for p in all_patterns if p.direction == "PUT"]
 
