@@ -566,8 +566,11 @@ def _evaluate_strat(
         if strat.combo and strat.combo_dir == direction:
             signals.append(f"{strat.combo} ▲ on {tf_label}" if call
                            else f"{strat.combo} ▼ on {tf_label}")
-            bonus = max(bonus, 1)
-            has_combo = True
+            # 2-2 is just trend continuation — too common to count as Tier 1
+            # Only structural/reversal combos (2-1-2, 1-2-2, 3-2-2, 3-1-2) earn +1
+            if strat.combo != "2-2":
+                bonus = max(bonus, 1)
+                has_combo = True
 
     has_pmg = False
     for strat, tf_label in [(strat_daily, "Daily"), (strat_4h, "4H")]:
@@ -577,7 +580,8 @@ def _evaluate_strat(
             has_pmg = True
 
     # Upgrade to ELITE when 2+ Tier 1 signals align (without F2)
-    # FTFC + combo, FTFC + PMG, or combo + PMG = strong enough for ELITE
+    # FTFC + structural combo, FTFC + PMG, or structural combo + PMG = ELITE
+    # Note: has_combo is only True for structural combos (not 2-2)
     tier1_count = sum([has_ftfc, has_combo, has_pmg])
     if not has_f2 and tier1_count >= 2:
         bonus = 2
