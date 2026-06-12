@@ -856,13 +856,16 @@ class SwingScanner:
         )
 
         # Strat conviction boost:
-        #   bonus=2 (F2, FTFC, PMG) → jump straight to 7★ ELITE regardless of base
-        #   bonus=1 (combo only)    → +1 to base conviction, capped at 7
+        #   bonus=2 → ELITE (7★) regardless of base
+        #             Only F2 traps, or 2+ of {FTFC, structural combo, PMG}
+        #   bonus=1 → +1 to base, but HARD CAP at 6★
+        #             FTFC alone, combo alone, or PMG alone
+        #             Cannot reach ELITE without either F2 or two Tier 1 signals
         if strat_active:
             if strat_bonus >= 2:
                 conviction = 7
             elif strat_bonus == 1:
-                conviction = min(conviction + 1, 7)
+                conviction = min(conviction + 1, 6)  # cap at 6, not 7
 
         # GEX summary (whale override tag)
         if whale_override_active and not gex_result["supports"]:
