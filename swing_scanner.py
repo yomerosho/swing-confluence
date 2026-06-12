@@ -538,34 +538,49 @@ def _evaluate_strat(
 
     call = direction == "CALL"
 
-    # ── Tier 2 signals: F2 traps, FTFC, PMG ─────────────────────────────────
-    # These are high-conviction reversals / continuations — boost straight to 7★
-
+    # ── Tier 2 → ELITE (bonus=2): F2 trap only ───────────────────────────────
+    # F2 traps are the highest-quality Strat signal — a confirmed failed breakout
+    # with trapped participants. Rare and directionally precise. ELITE on its own.
+    has_f2 = False
     for strat, tf_label in [(strat_daily, "Daily"), (strat_4h, "4H")]:
         if call and strat.is_f2d:
             signals.append(f"F2D 🪤 on {tf_label} (bears trapped)")
             bonus = max(bonus, 2)
+            has_f2 = True
         if not call and strat.is_f2u:
             signals.append(f"F2U 🪤 on {tf_label} (bulls trapped)")
             bonus = max(bonus, 2)
+            has_f2 = True
 
-    for strat, tf_label in [(strat_daily, "Daily"), (strat_4h, "4H")]:
-        if strat.is_pmg:
-            signals.append(f"⚡ PMG on {tf_label} ({strat.pmg_count} bars)")
-            bonus = max(bonus, 2)
-
+    # ── Tier 1 → +1: FTFC, PMG, combos ──────────────────────────────────────
+    # Each adds +1 to base conviction. Two or more Tier 1 signals together
+    # (e.g. FTFC + combo, or PMG + combo) also reach ELITE via cumulative bonus.
     ftfc_dir_map = {"BULL": "CALL", "BEAR": "PUT"}
-    if ftfc.ftfc and ftfc_dir_map.get(ftfc.ftfc_dir) == direction:
+    has_ftfc = ftfc.ftfc and ftfc_dir_map.get(ftfc.ftfc_dir) == direction
+    if has_ftfc:
         signals.append(f"FTFC {ftfc.summary}")
-        bonus = max(bonus, 2)
+        bonus = max(bonus, 1)
 
-    # ── Tier 1 signals: directional combos ───────────────────────────────────
-    # Good confirmation — adds +1 to base conviction
+    has_combo = False
     for strat, tf_label in [(strat_daily, "Daily"), (strat_4h, "4H")]:
         if strat.combo and strat.combo_dir == direction:
             signals.append(f"{strat.combo} ▲ on {tf_label}" if call
                            else f"{strat.combo} ▼ on {tf_label}")
             bonus = max(bonus, 1)
+            has_combo = True
+
+    has_pmg = False
+    for strat, tf_label in [(strat_daily, "Daily"), (strat_4h, "4H")]:
+        if strat.is_pmg:
+            signals.append(f"⚡ PMG on {tf_label} ({strat.pmg_count} bars)")
+            bonus = max(bonus, 1)
+            has_pmg = True
+
+    # Upgrade to ELITE when 2+ Tier 1 signals align (without F2)
+    # FTFC + combo, FTFC + PMG, or combo + PMG = strong enough for ELITE
+    tier1_count = sum([has_ftfc, has_combo, has_pmg])
+    if not has_f2 and tier1_count >= 2:
+        bonus = 2
 
     strat_active = bool(signals)
     summary      = " · ".join(signals) if signals else ""
@@ -1011,9 +1026,10 @@ class SwingScanner:
             # Strat F2 targets: structurally validated — use any level above entry.
             # GEX/pattern levels still need min_dist to avoid trivially close targets.
             strat_ups = sorted(lv for lv in strat_targets if lv > entry)
+            max_t1 = entry + 3.0 * atr_val   # cap: T1 within 3x ATR for 1-3 day swing
             gex_ups   = sorted(
                 lv for lv in [gex_result.get("magnet"), gex_result.get("resistance")]
-                if lv and lv > entry + min_dist
+                if lv and entry + min_dist < lv <= max_t1
             )
             ups    = strat_ups if strat_ups else gex_ups
             target = ups[0] if ups else entry + ATR_TARGET_MULT * atr_val
@@ -1033,9 +1049,10 @@ class SwingScanner:
             strat_downs = sorted(
                 (lv for lv in strat_targets if lv < entry), reverse=True
             )
+            min_t1 = entry - 3.0 * atr_val   # cap: T1 within 3x ATR for 1-3 day swing
             gex_downs   = sorted(
                 (lv for lv in [gex_result.get("magnet"), gex_result.get("support")]
-                 if lv and lv < entry - min_dist),
+                 if lv and min_t1 <= lv < entry - min_dist),
                 reverse=True,
             )
             downs  = strat_downs if strat_downs else gex_downs
