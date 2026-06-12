@@ -235,40 +235,38 @@ class StratDetector:
             #   T1 = low of the bar BEFORE the 2U bar (the last down swing low)
             #   T2 = lowest low in the 10 bars preceding that
             if result.is_f2d and len(df) >= 5:
-                # F2D (bullish): Rob Smith's targets:
-                #   T1 = high of prev2 (the last bar before the 2D selloff)
-                #        This is the exact level bears who shorted the breakdown
-                #        need to cover to — the clearest near-term target.
-                #   T2 = highest high in the 3 bars before prev2
-                #        Next structure resistance above T1.
-                t1_candidate = float(prev2["High"])
+                # F2D (bullish): targets use BODY levels, not wicks.
+                # Wicks are liquidity grabs — body close/open is where price accepted.
+                #   T1 = body high of prev2 (max of open/close of bar before the 2D)
+                #   T2 = body high of the highest-body bar in the 3 bars before prev2
+                t1_candidate = round(max(float(prev2["Close"]), float(prev2["Open"])), 2)
                 if t1_candidate > c0:
-                    result.f2_t1 = round(t1_candidate, 2)
-                # T2: highest high in bars[-6:-3] (3 bars before prev2)
+                    result.f2_t1 = t1_candidate
+                # T2: highest body high in bars[-6:-3]
                 lookback_start = max(0, len(df) - 6)
                 lookback_end   = len(df) - 3
                 if lookback_end > lookback_start:
                     window = df.iloc[lookback_start:lookback_end]
-                    t2_candidate = float(window["High"].max())
+                    body_highs = window[["Open", "Close"]].max(axis=1)
+                    t2_candidate = round(float(body_highs.max()), 2)
                     if t2_candidate > c0 and t2_candidate != t1_candidate:
-                        result.f2_t2 = round(t2_candidate, 2)
-                # If T2 == T1 or not found, step up one ATR from T1
-                # (handled downstream in _build_trade_plan fallback)
+                        result.f2_t2 = t2_candidate
 
             if result.is_f2u and len(df) >= 5:
-                # F2U (bearish): symmetric logic
-                #   T1 = low of prev2 (the last bar before the 2U run-up)
-                #   T2 = lowest low in bars[-6:-3]
-                t1_candidate = float(prev2["Low"])
+                # F2U (bearish): body low of prev2, then lowest body low in prior 3 bars
+                #   T1 = body low of prev2 (min of open/close)
+                #   T2 = body low of the lowest-body bar in the 3 bars before prev2
+                t1_candidate = round(min(float(prev2["Close"]), float(prev2["Open"])), 2)
                 if t1_candidate < c0:
-                    result.f2_t1 = round(t1_candidate, 2)
+                    result.f2_t1 = t1_candidate
                 lookback_start = max(0, len(df) - 6)
                 lookback_end   = len(df) - 3
                 if lookback_end > lookback_start:
                     window = df.iloc[lookback_start:lookback_end]
-                    t2_candidate = float(window["Low"].min())
+                    body_lows = window[["Open", "Close"]].min(axis=1)
+                    t2_candidate = round(float(body_lows.min()), 2)
                     if t2_candidate < c0 and t2_candidate != t1_candidate:
-                        result.f2_t2 = round(t2_candidate, 2)
+                        result.f2_t2 = t2_candidate
 
             # ── Combo detection ───────────────────────────────────────
             combo, combo_dir = cls._detect_combo(t0, t1, t2, c0, o0)
