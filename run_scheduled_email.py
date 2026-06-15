@@ -66,6 +66,8 @@ def main():
                          help="Print HTML to stdout instead of sending")
     parser.add_argument("--skip-if-empty", action="store_true",
                          help="Don't send email if no setups found")
+    parser.add_argument("--min-conviction", type=int, default=None,
+                         help="Override minimum conviction tier (e.g. 6 for MAX+ only)")
     args = parser.parse_args()
 
     # Validate env vars
@@ -90,6 +92,8 @@ def main():
         logger.info(f"  [{int(pct*100):3d}%] {msg}")
 
     setups = scanner.scan_all(progress_cb=progress)
+    if args.min_conviction is not None:
+        setups = [s for s in setups if s.conviction >= args.min_conviction]
     logger.info(f"Found {len(setups)} confluence setup(s)")
 
     # Skip email if requested and no setups

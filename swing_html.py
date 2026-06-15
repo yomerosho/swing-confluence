@@ -357,7 +357,7 @@ def build_swing_report(setups: List[ConfluenceSetup],
         </div>
         """
     else:
-        elite_count  = sum(1 for s in setups if conviction == 7)
+        elite_count  = sum(1 for s in setups if s.conviction == 7)
         max_count    = sum(1 for s in setups if s.conviction == 6)
         high_count   = sum(1 for s in setups if s.conviction == 5)
         medium_count = sum(1 for s in setups if s.conviction == 4)
