@@ -2,11 +2,11 @@
 # Format: email or Name,email — one per line. Lines starting with # are comments.
 
 yshobowa@gmail.com,Yomi
-xaintmark@gmail.com,Mark
-Pamelaabina24@gmail.com,Pamela
-Cenezuagu@globalinconsulting.com,Obi
-Uzoma.Onukwubiri@gmail.com,Uzo
-Ugonma.Onukwubiri@gmail.com,Ugo
+# xaintmark@gmail.com,Mark
+# Pamelaabina24@gmail.com,Pamela
+# Cenezuagu@globalinconsulting.com,Obi
+# Uzoma.Onukwubiri@gmail.com,Uzo
+# Ugonma.Onukwubiri@gmail.com,Ugo
 adesholamakinde@gmail.com,Shola
-excelesq@yahoo.com, Excel
-Tega.etare@gmail.com, Tega
+# excelesq@yahoo.com, Excel
+# Tega.etare@gmail.com, Tega
