@@ -16,6 +16,7 @@ from swing_scanner import (
     ALL_TICKERS, INDICES_ETFS, MEGA_CAPS, SWING_NAMES,
 )
 from swing_html import build_swing_report, render_setup_card, PALETTE
+from morning_briefing import render_morning_briefing
 
 
 # ── Page config ───────────────────────────────────────────────────────────────
@@ -591,9 +592,10 @@ if email_btn:
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
 
-tab_scanner, tab_diagnostic = st.tabs([
+tab_scanner, tab_diagnostic, tab_morning = st.tabs([
     "🎯 Confluence Scanner",
     "🔬 Diagnostic Scan",
+    "🌅 Morning Briefing",
 ])
 
 
@@ -1039,6 +1041,13 @@ with tab_diagnostic:
             Click <b style='color:{PALETTE["brand"]};'>Run Diagnostic Scan</b> to see where setups are getting filtered
           </p>
         </div>""", unsafe_allow_html=True)
+
+# ════════════════════════════════════════════════
+#  TAB 3 — MORNING BRIEFING
+# ════════════════════════════════════════════════
+with tab_morning:
+    render_morning_briefing()
+
 
 # ── Subscriber Management ─────────────────────────────────────────────────────
 
