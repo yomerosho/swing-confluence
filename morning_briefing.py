@@ -192,31 +192,9 @@ def analyze_ticker(symbol, bars_df):
 
 
 # ── Main render function ──────────────────────────────────────────────────────
-def render_morning_briefing():
+def render_morning_briefing(api_key="", api_secret="", base_url="https://api.alpaca.markets"):
     st.markdown("## 🌅 Morning Briefing")
     st.caption("Ranks your CORE_20 + ETFs by confluence score. Run at 9:25 AM before open.")
-
-    # ── Credentials ─────────────────────────────────────────────────────────
-    with st.expander("⚙️ Alpaca API Keys", expanded=False):
-        col1, col2 = st.columns(2)
-        with col1:
-            api_key = st.text_input("API Key", type="password",
-                                    value=st.session_state.get("alpaca_key", ""))
-        with col2:
-            api_secret = st.text_input("API Secret", type="password",
-                                       value=st.session_state.get("alpaca_secret", ""))
-        base_url = st.text_input("Base URL", value="https://paper-api.alpaca.markets",
-                                 help="Use https://api.alpaca.markets for live")
-
-        if st.button("Save Keys"):
-            st.session_state["alpaca_key"]    = api_key
-            st.session_state["alpaca_secret"] = api_secret
-            st.session_state["alpaca_url"]    = base_url
-            st.success("Keys saved for this session.")
-
-    api_key    = st.session_state.get("alpaca_key", "")
-    api_secret = st.session_state.get("alpaca_secret", "")
-    base_url   = st.session_state.get("alpaca_url", "https://paper-api.alpaca.markets")
 
     # ── Run scan ─────────────────────────────────────────────────────────────
     run_col, time_col = st.columns([1, 3])
@@ -227,7 +205,7 @@ def render_morning_briefing():
 
     if run_scan:
         if not api_key or not api_secret:
-            st.warning("Enter your Alpaca API keys above first.")
+            st.warning("⚠️ Alpaca keys not configured. Add them to your Streamlit secrets under [alpaca].")
             return
 
         results = []
