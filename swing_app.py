@@ -1046,7 +1046,7 @@ with tab_diagnostic:
 #  TAB 3 — MORNING BRIEFING
 # ════════════════════════════════════════════════
 with tab_morning:
-    render_morning_briefing()
+    render_morning_briefing(api_key=ALPACA_KEY, api_secret=ALPACA_SECRET)
 
 
 # ── Subscriber Management ─────────────────────────────────────────────────────
