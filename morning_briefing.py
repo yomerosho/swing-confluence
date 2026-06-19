@@ -1,7 +1,7 @@
 """
 morning_briefing.py — SwingConfluence Morning Briefing Tab
 - Real IV Rank from Alpaca options snapshots
-- Full Strat analysis: 3-candle combo, FTFC (Daily + Weekly + Monthly)
+- Full Strat analysis: 3-candle combo, FTFC (1H + 4H + Daily)
 - Uses plain requests + swing_patterns.StratDetector (no extra SDK)
 """
 
@@ -81,34 +81,29 @@ def get_bars(api_key, api_secret, ticker, timeframe="1Day", days=365):
     return None
 
 
-def get_weekly_bars(api_key, api_secret, ticker):
-    """Fetch weekly bars — resample from daily for accuracy."""
-    df = get_bars(api_key, api_secret, ticker, timeframe="1Day", days=400)
-    if df is None or df.empty:
-        return None
-    weekly = df.resample("W").agg({
-        "Open":   "first",
-        "High":   "max",
-        "Low":    "min",
-        "Close":  "last",
-        "Volume": "sum",
-    }).dropna()
-    return weekly if len(weekly) >= 3 else None
+def get_4h_bars(api_key, api_secret, ticker):
+    """Fetch 4H bars — same as swing_scanner.AlpacaClient.get_bars(timeframe=4Hour)."""
+    return get_bars(api_key, api_secret, ticker, timeframe="4Hour", days=90)
 
 
-def get_monthly_bars(api_key, api_secret, ticker):
-    """Fetch monthly bars — resample from daily."""
-    df = get_bars(api_key, api_secret, ticker, timeframe="1Day", days=800)
-    if df is None or df.empty:
-        return None
-    monthly = df.resample("MS").agg({
-        "Open":   "first",
-        "High":   "max",
-        "Low":    "min",
-        "Close":  "last",
-        "Volume": "sum",
-    }).dropna()
-    return monthly if len(monthly) >= 3 else None
+def get_1h_bars(api_key, api_secret, ticker, df_4h=None):
+    """
+    Derive 1H bars by resampling 4H — mirrors StratDetector.compute_ftfc() approach.
+    Falls back to direct 1H fetch if 4H unavailable.
+    """
+    if df_4h is not None and not df_4h.empty:
+        try:
+            df_1h = (
+                df_4h.resample("1h")
+                .agg({"Open": "first", "High": "max",
+                      "Low": "min", "Close": "last", "Volume": "sum"})
+                .dropna()
+            )
+            if len(df_1h) >= 3:
+                return df_1h
+        except Exception:
+            pass
+    return get_bars(api_key, api_secret, ticker, timeframe="1Hour", days=10)
 
 
 # ── Real ATM IV from options snapshot ────────────────────────────────────────
@@ -187,10 +182,11 @@ def near_key_level(price, levels, threshold_pct=0.003):
     return False
 
 
-# ── FTFC across Daily / Weekly / Monthly ─────────────────────────────────────
-def compute_3tf_ftfc(df_daily, df_weekly, df_monthly):
+# ── FTFC across 1H / 4H / Daily ────────────────────────────────────────────
+def compute_3tf_ftfc(df_1h, df_4h, df_daily):
     """
-    Use StratDetector to get bias on each TF, then compute FTFC.
+    FTFC for intraday / 1-2 day holds: 1H + 4H + Daily alignment.
+    Mirrors swing_patterns.StratDetector.compute_ftfc() logic.
     Returns (ftfc_label, ftfc_score, ftfc_detail)
     """
     def _bias(df):
@@ -202,15 +198,15 @@ def compute_3tf_ftfc(df_daily, df_weekly, df_monthly):
         if c < o:  return "🔴"
         return "—"
 
-    d_bias = _bias(df_daily)
-    w_bias = _bias(df_weekly)
-    m_bias = _bias(df_monthly)
+    h1_bias = _bias(df_1h)
+    h4_bias = _bias(df_4h)
+    d_bias  = _bias(df_daily)
 
-    biases  = [d_bias, w_bias, m_bias]
-    bull_n  = biases.count("🟢")
-    bear_n  = biases.count("🔴")
-    score   = max(bull_n, bear_n)
-    detail  = f"D:{d_bias} W:{w_bias} M:{m_bias}"
+    biases = [h1_bias, h4_bias, d_bias]
+    bull_n = biases.count("🟢")
+    bear_n = biases.count("🔴")
+    score  = max(bull_n, bear_n)
+    detail = f"1H:{h1_bias} 4H:{h4_bias} D:{d_bias}"
 
     if bull_n == 3:
         return "✅ BULL", score, detail
@@ -225,7 +221,7 @@ def compute_3tf_ftfc(df_daily, df_weekly, df_monthly):
 
 
 # ── Per-ticker analysis ───────────────────────────────────────────────────────
-def analyze_ticker(api_key, api_secret, symbol, df_daily, df_weekly, df_monthly):
+def analyze_ticker(api_key, api_secret, symbol, df_daily, df_4h, df_1h):
     try:
         if df_daily is None or len(df_daily) < 10:
             return None
@@ -272,9 +268,9 @@ def analyze_ticker(api_key, api_secret, symbol, df_daily, df_weekly, df_monthly)
             strat_signal = f"Seq: {seq}"
             combo_dir    = ""
 
-        # ── FTFC (Daily / Weekly / Monthly) ─────────────────────────────────
+        # ── FTFC (1H / 4H / Daily) ───────────────────────────────────────────
         ftfc_label, ftfc_score, ftfc_detail = compute_3tf_ftfc(
-            df_daily, df_weekly, df_monthly
+            df_1h, df_4h, df_daily
         )
 
         # ── Bias from Strat (most recent bar direction) ───────────────────────
@@ -343,7 +339,7 @@ def analyze_ticker(api_key, api_secret, symbol, df_daily, df_weekly, df_monthly)
             "Strat":     strat_signal,
             "Seq":       seq,
             "FTFC":      ftfc_label,
-            "FTFC D/W/M": ftfc_detail,
+            "FTFC 1H/4H/D": ftfc_detail,
             "PDH":       round(pdh, 2),
             "PDL":       round(pdl, 2),
             "Near Key":  "✅" if near else "—",
@@ -361,7 +357,7 @@ def render_morning_briefing(api_key="", api_secret="", base_url="https://api.alp
     st.markdown("## 🌅 Morning Briefing")
     st.caption(
         f"Ranks all {len(ALL_TICKERS)} tickers — real Strat combos (3 candles), "
-        f"FTFC (Daily/Weekly/Monthly), IV Rank. Run at 9:25 AM before open."
+        f"FTFC (1H/4H/Daily — right for intraday to 1-2 day holds), IV Rank. Run at 9:25 AM before open."
     )
 
     run_col, time_col = st.columns([1, 3])
@@ -381,12 +377,12 @@ def render_morning_briefing(api_key="", api_secret="", base_url="https://api.alp
         for i, symbol in enumerate(ALL_TICKERS):
             progress.progress((i + 1) / len(ALL_TICKERS),
                               text=f"Analyzing {symbol}…")
-            # Fetch all three timeframes
-            df_d = get_bars(api_key, api_secret, symbol, timeframe="1Day", days=365)
-            df_w = get_weekly_bars(api_key, api_secret, symbol)
-            df_m = get_monthly_bars(api_key, api_secret, symbol)
+            # Fetch 1D + 4H + 1H (derived from 4H)
+            df_d  = get_bars(api_key, api_secret, symbol, timeframe="1Day", days=365)
+            df_4h = get_4h_bars(api_key, api_secret, symbol)
+            df_1h = get_1h_bars(api_key, api_secret, symbol, df_4h=df_4h)
 
-            row = analyze_ticker(api_key, api_secret, symbol, df_d, df_w, df_m)
+            row = analyze_ticker(api_key, api_secret, symbol, df_d, df_4h, df_1h)
             if row:
                 results.append(row)
             time.sleep(0.1)
@@ -488,7 +484,7 @@ def render_morning_briefing(api_key="", api_secret="", base_url="https://api.alp
         return ""
 
     display_cols = ["Symbol", "Price", "Bias", "Strat", "FTFC",
-                    "FTFC D/W/M", "Near Key", "IV Rank", "IV Source", "Score"]
+                    "FTFC 1H/4H/D", "Near Key", "IV Rank", "IV Source", "Score"]
     st.dataframe(
         df_out[display_cols].style.applymap(color_score, subset=["Score"]),
         use_container_width=True,
@@ -509,7 +505,7 @@ def render_morning_briefing(api_key="", api_secret="", base_url="https://api.alp
 **FTFC — Full Time Frame Continuity (up to +1.5)**
 | Alignment | Points |
 |---|---|
-| Daily + Weekly + Monthly all same direction | +1.5 |
+| 1H + 4H + Daily all same direction | +1.5 |
 | 2 of 3 timeframes aligned | +0.75 |
 
 **Other signals**
@@ -522,7 +518,7 @@ def render_morning_briefing(api_key="", api_secret="", base_url="https://api.alp
 
 **Strat combos:** 2-1-2 = classic setup (down bar → inside bar → up/down break).
 3-2-2 = outside bar reversal continuation. F2D/F2U = failed directional break trap.
-FTFC = all three timeframes (Daily/Weekly/Monthly) closing in the same direction.
+FTFC = 1H + 4H + Daily all closing in same direction — calibrated for intraday to 1-2 day holds.
         """)
 
     csv = df_out.to_csv(index=False).encode("utf-8")
