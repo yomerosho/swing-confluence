@@ -11,14 +11,7 @@ import time
 
 DATA_URL = "https://data.alpaca.markets"
 
-CORE_20 = [
-    "AMD", "NVDA", "TSLA", "AMZN", "META",
-    "GOOGL", "MSFT", "AAPL", "NFLX", "CRM",
-    "COIN", "HOOD", "MSTR", "PLTR", "ARM",
-    "UBER", "SHOP", "SQ", "SOFI", "PYPL",
-]
-INDICES_ETFS = ["SPY", "QQQ", "IWM"]
-ALL_TICKERS  = INDICES_ETFS + CORE_20
+from swing_scanner import ALL_TICKERS
 
 
 def _headers(api_key, api_secret):
@@ -167,7 +160,7 @@ def analyze_ticker(symbol, df):
 def render_morning_briefing(api_key="", api_secret="", base_url="https://api.alpaca.markets"):
 
     st.markdown("## 🌅 Morning Briefing")
-    st.caption("Ranks your CORE_20 + ETFs by confluence score. Run at 9:25 AM before open.")
+    st.caption(f"Ranks all {len(ALL_TICKERS)} tickers (INDICES + MEGA_CAPS + SWING_NAMES) by confluence score. Run at 9:25 AM before open.")
 
     run_col, time_col = st.columns([1, 3])
     with run_col:
