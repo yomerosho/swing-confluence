@@ -142,9 +142,20 @@ def analyze_ticker(symbol, df):
         if hvr is not None and hvr < 35:
             score += 1
 
+        # Bias
+        if strat_type == "2U":
+            bias = "🟢 Bullish"
+        elif strat_type == "2D":
+            bias = "🔴 Bearish"
+        elif strat_type == "1":
+            bias = "🟡 Neutral"
+        else:  # 3
+            bias = "⚠️ Reversal"
+
         return {
             "Symbol":    symbol,
             "Price":     round(price, 2),
+            "Bias":      bias,
             "Strat":     f"{strat_emoji} {strat_type}",
             "PDH":       round(pdh, 2),
             "PDL":       round(pdl, 2),
@@ -195,6 +206,55 @@ def render_morning_briefing(api_key="", api_secret="", base_url="https://api.alp
 
     df_out = pd.DataFrame(results).sort_values("Score", ascending=False).reset_index(drop=True)
 
+    # ── Market bias summary ───────────────────────────────────────────────────
+    total       = len(df_out)
+    bullish_n   = len(df_out[df_out["Bias"] == "🟢 Bullish"])
+    bearish_n   = len(df_out[df_out["Bias"] == "🔴 Bearish"])
+    neutral_n   = len(df_out[df_out["Bias"] == "🟡 Neutral"])
+    reversal_n  = len(df_out[df_out["Bias"] == "⚠️ Reversal"])
+
+    bull_pct = bullish_n / total * 100 if total else 0
+    bear_pct = bearish_n / total * 100 if total else 0
+
+    if bull_pct >= 60:
+        overall = "🟢 BULLISH"
+        overall_color = "#00ff88"
+        overall_note = "Majority of watchlist showing higher highs. Favor CALL setups."
+    elif bear_pct >= 60:
+        overall = "🔴 BEARISH"
+        overall_color = "#ff4444"
+        overall_note = "Majority of watchlist showing lower lows. Favor PUT setups."
+    elif bull_pct >= 45:
+        overall = "🟡 LEANING BULLISH"
+        overall_color = "#ffdd00"
+        overall_note = "Slight bullish edge. Be selective — confirm at key levels."
+    elif bear_pct >= 45:
+        overall = "🟡 LEANING BEARISH"
+        overall_color = "#ffaa00"
+        overall_note = "Slight bearish edge. Be selective — confirm at key levels."
+    else:
+        overall = "⚪ MIXED / CHOPPY"
+        overall_color = "#8888aa"
+        overall_note = "No clear directional edge. Wait for confirmation at key levels."
+
+    st.markdown("### 📊 Market Bias")
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Overall Bias", overall)
+    c2.metric("🟢 Bullish", f"{bullish_n} ({bull_pct:.0f}%)")
+    c3.metric("🔴 Bearish", f"{bearish_n} ({bear_pct:.0f}%)")
+    c4.metric("🟡 Neutral", neutral_n)
+    c5.metric("⚠️ Reversal", reversal_n)
+
+    st.markdown(
+        f"<div style='background:#1a1f2e;border-left:4px solid {overall_color};"
+        f"border-radius:8px;padding:12px 18px;margin:8px 0 16px 0;"
+        f"font-family:monospace;font-size:0.9rem;color:{overall_color};font-weight:700;'>"
+        f"{overall} — {overall_note}</div>",
+        unsafe_allow_html=True
+    )
+
+    st.divider()
+
     # ── Top picks ─────────────────────────────────────────────────────────────
     top = df_out[df_out["Score"] >= 2].head(5)
     st.markdown("### 🎯 Top Setups Today")
@@ -204,7 +264,7 @@ def render_morning_briefing(api_key="", api_secret="", base_url="https://api.alp
         for _, row in top.iterrows():
             bar = "█" * int(row["Score"] * 2)
             st.markdown(
-                f"**{row['Symbol']}** &nbsp; `{row['Strat']}` &nbsp; "
+                f"**{row['Symbol']}** &nbsp; {row['Bias']} &nbsp; `{row['Strat']}` &nbsp; "
                 f"Near Key: {row['Near Key']} &nbsp; "
                 f"HV Rank: {row['HV Rank']} &nbsp; "
                 f"Score: **{row['Score']}** `{bar}`"
@@ -223,7 +283,7 @@ def render_morning_briefing(api_key="", api_secret="", base_url="https://api.alp
         return ""
 
     st.dataframe(
-        df_out.style.applymap(color_score, subset=["Score"]),
+        df_out[["Symbol","Price","Bias","Strat","PDH","PDL","Near Key","HV Rank","Score"]].style.applymap(color_score, subset=["Score"]),
         use_container_width=True,
         hide_index=True,
     )
