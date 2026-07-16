@@ -7,6 +7,6 @@ yshobowa@gmail.com,Yomi
 # Cenezuagu@globalinconsulting.com,Obi
 # Uzoma.Onukwubiri@gmail.com,Uzo
 # Ugonma.Onukwubiri@gmail.com,Ugo
-adesholamakinde@gmail.com,Shola
+# adesholamakinde@gmail.com,Shola
 # excelesq@yahoo.com, Excel
 # Tega.etare@gmail.com, Tega
